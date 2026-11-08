@@ -17,9 +17,35 @@ from __future__ import annotations
 
 import json
 import os
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
-__all__ = ["BatchError", "BatchJob", "BatchManifest"]
+from video_dubber.assemble import build_report, dub_transcript, mux_audio
+from video_dubber.audio import DEFAULT_SAMPLE_RATE, load_wav, resample, save_wav
+from video_dubber.extract import extract_audio
+from video_dubber.quality import wer_from_transcripts
+from video_dubber.transcribe import (
+    ScriptedTranscriber,
+    WhisperCliTranscriber,
+    transcribe_file,
+)
+from video_dubber.transcript import Transcript
+from video_dubber.translate import (
+    DictionaryTranslator,
+    Glossary,
+    translate_transcript,
+)
+from video_dubber.voice import ScriptedVoiceCloner, SpeakerProfile, VoiceCloner
+
+__all__ = [
+    "BatchError",
+    "BatchJob",
+    "BatchJobResult",
+    "BatchManifest",
+    "run_batch",
+    "run_job",
+]
 
 _PATH_FIELDS = ("video", "transcript", "script", "profile", "glossary", "reference")
 _JOB_KEYS = frozenset(_PATH_FIELDS) | {
@@ -149,3 +175,150 @@ def _check_files(job: BatchJob) -> None:
         path = getattr(job, key)
         if path is not None and not os.path.exists(path):
             raise BatchError(f"job {job.name!r}: {key} file not found: {path}")
+
+
+# --- Running ------------------------------------------------------------------
+
+
+@dataclass
+class BatchJobResult:
+    """Outcome of one job: what it produced, how good it is, what failed."""
+
+    name: str
+    status: str  # "ok" | "failed" | "skipped"
+    error: str | None = None
+    outputs: dict[str, str] = field(default_factory=dict)
+    transcription_wer: float | None = None  # vs job.reference, when given
+    mos_proxy: float | None = None
+    verdict: str | None = None
+    duration_s: float = 0.0
+
+
+def _load_transcript(path: str) -> Transcript:
+    with open(path, encoding="utf-8") as fh:
+        return Transcript.from_json(fh.read())
+
+
+def run_job(
+    job: BatchJob,
+    out_dir: str,
+    cloner: VoiceCloner | None = None,
+    force: bool = False,
+) -> BatchJobResult:
+    """Run one job's full pipeline into ``<out_dir>/<job.name>/``.
+
+    Video jobs: extract → transcribe → translate → dub (+ mux).
+    Transcript jobs: translate → dub. Skips the job when its dubbed WAV
+    already exists and ``force`` is false. Never raises: failures are
+    reported as a ``failed`` result so one bad job does not kill a batch.
+    """
+    started = time.monotonic()
+    job_dir = os.path.join(out_dir, job.name)
+    dubbed_wav = os.path.join(job_dir, "dubbed.wav")
+    if not force and os.path.exists(dubbed_wav):
+        return BatchJobResult(
+            name=job.name, status="skipped", duration_s=time.monotonic() - started
+        )
+    try:
+        os.makedirs(job_dir, exist_ok=True)
+        with open(job.profile, encoding="utf-8") as fh:
+            profile = SpeakerProfile.from_json(fh.read())
+        original = None
+        if job.video is not None:
+            audio_path = extract_audio(job.video, os.path.join(job_dir, "audio.wav"))
+            original = resample(load_wav(audio_path), DEFAULT_SAMPLE_RATE)
+        if job.transcript is not None:
+            transcript = _load_transcript(job.transcript)
+        elif job.backend == "scripted":
+            transcriber = ScriptedTranscriber.from_json_file(job.script or "")
+            transcript = transcribe_file(
+                os.path.join(job_dir, "audio.wav"), transcriber, language=job.source
+            )
+        else:
+            transcript = transcribe_file(
+                os.path.join(job_dir, "audio.wav"),
+                WhisperCliTranscriber(model=job.model),
+                language=job.source,
+            )
+        wer: float | None = None
+        if job.reference is not None:
+            reference = _load_transcript(job.reference)
+            wer = wer_from_transcripts(reference, transcript).wer
+        source = job.source or transcript.language or "en"
+        translator = DictionaryTranslator(source=source, target=job.target)
+        glossary = Glossary.from_json_file(job.glossary) if job.glossary else None
+        translated = translate_transcript(
+            transcript,
+            translator,
+            target=job.target,
+            source=source,
+            glossary=glossary,
+            max_chars=job.max_chars,
+        )
+        dub_audio, fit_factors, placed = dub_transcript(
+            translated, cloner or ScriptedVoiceCloner(), profile, original
+        )
+        save_wav(dubbed_wav, dub_audio)
+        report = build_report(
+            translated,
+            placed,
+            fit_factors,
+            dub_audio,
+            original,
+            translation_coverage=translator.last_coverage,
+        )
+        outputs = {"dubbed_wav": dubbed_wav}
+        if job.video is not None and job.mux:
+            muxed = os.path.join(job_dir, "dubbed.mp4")
+            mux_audio(job.video, dubbed_wav, muxed)
+            outputs["dubbed_video"] = muxed
+        transcript_path = os.path.join(job_dir, "transcript.json")
+        with open(transcript_path, "w", encoding="utf-8") as fh:
+            fh.write(transcript.to_json())
+        outputs["transcript"] = transcript_path
+        translated_path = os.path.join(job_dir, "translated.json")
+        with open(translated_path, "w", encoding="utf-8") as fh:
+            fh.write(translated.to_json())
+        outputs["translated"] = translated_path
+        report_path = os.path.join(job_dir, "report.json")
+        with open(report_path, "w", encoding="utf-8") as fh:
+            fh.write(report.to_json())
+        outputs["report"] = report_path
+        return BatchJobResult(
+            name=job.name,
+            status="ok",
+            outputs=outputs,
+            transcription_wer=wer,
+            mos_proxy=report.mos_proxy,
+            verdict=report.verdict,
+            duration_s=time.monotonic() - started,
+        )
+    except Exception as exc:  # noqa: BLE001 — one bad job must not kill the batch
+        return BatchJobResult(
+            name=job.name,
+            status="failed",
+            error=str(exc),
+            duration_s=time.monotonic() - started,
+        )
+
+
+def run_batch(
+    manifest: BatchManifest,
+    out_dir: str,
+    force: bool = False,
+    stop_on_error: bool = False,
+    runner: Callable[[BatchJob, str, bool], BatchJobResult] = run_job,
+) -> list[BatchJobResult]:
+    """Run every job in the manifest, in order.
+
+    ``runner`` is injectable so tests can stub the pipeline; the default
+    is :func:`run_job`. With ``stop_on_error`` the batch stops after the
+    first failed job instead of continuing with the rest.
+    """
+    results: list[BatchJobResult] = []
+    for job in manifest.jobs:
+        result = runner(job, out_dir, force)
+        results.append(result)
+        if stop_on_error and result.status == "failed":
+            break
+    return results

@@ -117,3 +117,138 @@ def test_manifest_transcript_job_needs_no_script(tmp_path):
     )
     assert manifest.jobs[0].transcript == str(transcript)
     assert manifest.jobs[0].backend == "whisper"
+
+
+# --- Runner -------------------------------------------------------------------
+
+
+def _profile_file(tmp_path) -> str:
+    from video_dubber.voice import EMBEDDING_DIM, SpeakerProfile
+
+    profile = SpeakerProfile(name="Asha", embedding=[0.25] * EMBEDDING_DIM, base_pitch_hz=180.0)
+    path = tmp_path / "asha.json"
+    path.write_text(profile.to_json())
+    return str(path)
+
+
+def _transcript_file(tmp_path, name: str, text: str, language: str = "en") -> str:
+    from video_dubber.transcript import Segment, Transcript, Word
+
+    # 0.4s per word = 150 wpm, the profile's speaking rate, so the dub
+    # fits its windows without extreme stretching.
+    words = [Word(text=w, start=i * 0.4, end=(i + 1) * 0.4) for i, w in enumerate(text.split())]
+    transcript = Transcript(segments=[Segment(words=words)], language=language)
+    path = tmp_path / name
+    path.write_text(transcript.to_json())
+    return str(path)
+
+
+def test_run_job_transcript_job_produces_dub_and_report(tmp_path):
+    from video_dubber.batch import run_job
+
+    transcript = _transcript_file(tmp_path, "src.json", "hello mars good morning")
+    job = BatchJob(
+        name="clip1", target="hi", profile=_profile_file(tmp_path), transcript=transcript
+    )
+    result = run_job(job, str(tmp_path / "out"))
+    assert result.status == "ok"
+    assert result.verdict == "good"
+    assert result.mos_proxy is not None and result.mos_proxy >= 4.0
+    assert result.transcription_wer is None  # no reference given
+    for key in ("dubbed_wav", "transcript", "translated", "report"):
+        assert key in result.outputs
+        assert result.outputs[key].endswith((".wav", ".json"))
+    with open(result.outputs["translated"], encoding="utf-8") as fh:
+        translated = json.loads(fh.read())
+    assert "नमस्ते" in json.dumps(translated, ensure_ascii=False)
+
+
+def test_run_job_wer_against_reference(tmp_path):
+    from video_dubber.batch import run_job
+
+    transcript = _transcript_file(tmp_path, "src.json", "hello mars")
+    reference = _transcript_file(tmp_path, "ref.json", "hello venus")
+    job = BatchJob(
+        name="clip1",
+        target="hi",
+        profile=_profile_file(tmp_path),
+        transcript=transcript,
+        reference=reference,
+    )
+    result = run_job(job, str(tmp_path / "out"))
+    assert result.status == "ok"
+    assert result.transcription_wer == pytest.approx(0.5)
+
+
+def test_run_job_skips_when_output_exists(tmp_path):
+    from video_dubber.batch import run_job
+
+    transcript = _transcript_file(tmp_path, "src.json", "hello mars")
+    job = BatchJob(
+        name="clip1", target="hi", profile=_profile_file(tmp_path), transcript=transcript
+    )
+    out = str(tmp_path / "out")
+    assert run_job(job, out).status == "ok"
+    assert run_job(job, out).status == "skipped"
+    assert run_job(job, out, force=True).status == "ok"
+
+
+def test_run_job_failure_is_a_result_not_an_exception(tmp_path):
+    from video_dubber.batch import run_job
+
+    transcript = _transcript_file(tmp_path, "src.json", "hello mars")
+    job = BatchJob(
+        name="clip1",
+        target="hi",
+        profile=_profile_file(tmp_path),
+        transcript=transcript,
+    )
+    # Corrupt the profile after validation so the run itself fails.
+    with open(job.profile, "w", encoding="utf-8") as fh:
+        fh.write("{not json")
+    result = run_job(job, str(tmp_path / "out"))
+    assert result.status == "failed"
+    assert result.error
+
+
+def test_run_batch_continues_after_failure_by_default(tmp_path):
+    from video_dubber.batch import BatchJobResult, run_batch
+
+    calls: list[str] = []
+
+    def stub(job, out_dir, force=False):
+        calls.append(job.name)
+        if job.name == "bad":
+            return BatchJobResult(name=job.name, status="failed", error="boom")
+        return BatchJobResult(name=job.name, status="ok")
+
+    manifest = BatchManifest(
+        jobs=[
+            BatchJob(name="good1", target="hi", profile="p.json", transcript="t.json"),
+            BatchJob(name="bad", target="hi", profile="p.json", transcript="t.json"),
+            BatchJob(name="good2", target="hi", profile="p.json", transcript="t.json"),
+        ]
+    )
+    results = run_batch(manifest, str(tmp_path), runner=stub)
+    assert [r.status for r in results] == ["ok", "failed", "ok"]
+    assert calls == ["good1", "bad", "good2"]
+
+
+def test_run_batch_stop_on_error(tmp_path):
+    from video_dubber.batch import BatchJobResult, run_batch
+
+    def stub(job, out_dir, force=False):
+        return BatchJobResult(
+            name=job.name,
+            status="failed" if job.name == "bad" else "ok",
+            error="boom" if job.name == "bad" else None,
+        )
+
+    manifest = BatchManifest(
+        jobs=[
+            BatchJob(name="bad", target="hi", profile="p.json", transcript="t.json"),
+            BatchJob(name="good", target="hi", profile="p.json", transcript="t.json"),
+        ]
+    )
+    results = run_batch(manifest, str(tmp_path), stop_on_error=True, runner=stub)
+    assert [r.name for r in results] == ["bad"]
