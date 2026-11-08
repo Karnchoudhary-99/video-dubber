@@ -252,3 +252,52 @@ def test_run_batch_stop_on_error(tmp_path):
     )
     results = run_batch(manifest, str(tmp_path), stop_on_error=True, runner=stub)
     assert [r.name for r in results] == ["bad"]
+
+
+# --- Summary ------------------------------------------------------------------
+
+
+def test_batch_summary_counts_and_means():
+    from video_dubber.batch import BatchJobResult, BatchSummary
+
+    summary = BatchSummary(
+        results=[
+            BatchJobResult(
+                name="a", status="ok", verdict="good", mos_proxy=4.8, transcription_wer=0.1
+            ),
+            BatchJobResult(name="b", status="ok", verdict="review", mos_proxy=3.0),
+            BatchJobResult(name="c", status="failed", error="boom"),
+            BatchJobResult(name="d", status="skipped"),
+        ]
+    )
+    assert (summary.total, summary.succeeded, summary.failed, summary.skipped) == (4, 2, 1, 1)
+    assert summary.mean_wer == pytest.approx(0.1)  # only jobs with a WER count
+    assert summary.mean_mos == pytest.approx(3.9)
+    data = json.loads(summary.to_json())
+    assert data["total"] == 4 and data["mean_mos_proxy"] == 3.9
+    md = summary.to_markdown()
+    assert "2 ok, 1 failed, 1 skipped" in md
+    assert "| c | failed |" in md and "boom" in md
+
+
+def test_batch_summary_empty_means_are_none():
+    from video_dubber.batch import BatchJobResult, BatchSummary
+
+    summary = BatchSummary(results=[BatchJobResult(name="a", status="skipped")])
+    assert summary.mean_wer is None
+    assert summary.mean_mos is None
+    assert json.loads(summary.to_json())["mean_mos_proxy"] is None
+
+
+def test_summarize_writes_report_files(tmp_path):
+    from video_dubber.batch import BatchJobResult, summarize
+
+    out = tmp_path / "out"
+    summary = summarize(
+        [BatchJobResult(name="a", status="ok", verdict="good", mos_proxy=5.0)],
+        str(out),
+    )
+    assert summary.succeeded == 1
+    assert (out / "batch-report.json").exists()
+    assert (out / "batch-report.md").exists()
+    assert "Batch dub report" in (out / "batch-report.md").read_text(encoding="utf-8")

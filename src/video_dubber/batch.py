@@ -43,8 +43,10 @@ __all__ = [
     "BatchJob",
     "BatchJobResult",
     "BatchManifest",
+    "BatchSummary",
     "run_batch",
     "run_job",
+    "summarize",
 ]
 
 _PATH_FIELDS = ("video", "transcript", "script", "profile", "glossary", "reference")
@@ -322,3 +324,108 @@ def run_batch(
         if stop_on_error and result.status == "failed":
             break
     return results
+
+
+# --- Summary report -----------------------------------------------------------
+
+
+@dataclass
+class BatchSummary:
+    """Aggregate outcome of a batch run (JSON + Markdown)."""
+
+    results: list[BatchJobResult]
+
+    @property
+    def total(self) -> int:
+        return len(self.results)
+
+    @property
+    def succeeded(self) -> int:
+        return sum(1 for r in self.results if r.status == "ok")
+
+    @property
+    def failed(self) -> int:
+        return sum(1 for r in self.results if r.status == "failed")
+
+    @property
+    def skipped(self) -> int:
+        return sum(1 for r in self.results if r.status == "skipped")
+
+    @property
+    def mean_wer(self) -> float | None:
+        wers = [r.transcription_wer for r in self.results if r.transcription_wer is not None]
+        return sum(wers) / len(wers) if wers else None
+
+    @property
+    def mean_mos(self) -> float | None:
+        scores = [r.mos_proxy for r in self.results if r.mos_proxy is not None]
+        return sum(scores) / len(scores) if scores else None
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "total": self.total,
+                "succeeded": self.succeeded,
+                "failed": self.failed,
+                "skipped": self.skipped,
+                "mean_transcription_wer": (
+                    None if self.mean_wer is None else round(self.mean_wer, 3)
+                ),
+                "mean_mos_proxy": (None if self.mean_mos is None else round(self.mean_mos, 2)),
+                "jobs": [
+                    {
+                        "name": r.name,
+                        "status": r.status,
+                        "error": r.error,
+                        "verdict": r.verdict,
+                        "mos_proxy": r.mos_proxy,
+                        "transcription_wer": r.transcription_wer,
+                        "duration_s": round(r.duration_s, 2),
+                        "outputs": r.outputs,
+                    }
+                    for r in self.results
+                ],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+
+    def to_markdown(self) -> str:
+        lines = [
+            "# Batch dub report",
+            "",
+            f"- Jobs: {self.total} "
+            f"({self.succeeded} ok, {self.failed} failed, {self.skipped} skipped)",
+        ]
+        if self.mean_wer is not None:
+            lines.append(f"- Mean transcription WER: {self.mean_wer:.3f}")
+        if self.mean_mos is not None:
+            lines.append(f"- Mean MOS proxy: {self.mean_mos:.2f}")
+        lines += [
+            "",
+            "| job | status | verdict | MOS proxy | WER |",
+            "| --- | --- | --- | --- | --- |",
+        ]
+        for r in self.results:
+            lines.append(
+                f"| {r.name} | {r.status} | {r.verdict or '-'} | "
+                f"{r.mos_proxy if r.mos_proxy is not None else '-'} | "
+                f"{r.transcription_wer if r.transcription_wer is not None else '-'} |"
+            )
+        failures = [r for r in self.results if r.status == "failed"]
+        if failures:
+            lines += ["", "## Failures", ""]
+            for r in failures:
+                lines.append(f"- **{r.name}**: {r.error}")
+        return "\n".join(lines) + "\n"
+
+
+def summarize(results: list[BatchJobResult], out_dir: str) -> BatchSummary:
+    """Build the batch summary and write batch-report.json/.md into ``out_dir``."""
+    summary = BatchSummary(results=results)
+    os.makedirs(out_dir, exist_ok=True)
+    with open(os.path.join(out_dir, "batch-report.json"), "w", encoding="utf-8") as fh:
+        fh.write(summary.to_json())
+    with open(os.path.join(out_dir, "batch-report.md"), "w", encoding="utf-8") as fh:
+        fh.write(summary.to_markdown())
+    return summary
