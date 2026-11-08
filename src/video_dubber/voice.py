@@ -203,3 +203,72 @@ def extract_features(audio: AudioData) -> dict[str, float]:
     out = {k: sum(f[k] for f in voiced) / len(voiced) for k in keys}
     out["voiced_ratio"] = len(voiced) / len(per_frame)
     return out
+
+
+def extract_embedding(audio: AudioData) -> list[float]:
+    """Deterministic speaker embedding from reference audio.
+
+    16 dims: log-RMS, zero-crossing rate, normalised centroid, normalised
+    pitch, voiced ratio, spectral flatness, band-energy spread, the 8
+    normalised band energies, and the low-frequency share. The vector is
+    L2-normalised so :func:`cosine_similarity` is a plain dot product.
+    """
+    feats = extract_features(audio)
+    bands = [feats[f"band{i}"] for i in range(len(_BAND_FREQS))]
+    band_mean = sum(bands) / len(bands) or 1.0
+    geo_mean = math.exp(sum(math.log(b + 1e-9) for b in bands) / len(bands))
+    flatness = geo_mean / band_mean
+    spread = math.sqrt(sum((b - band_mean) ** 2 for b in bands) / len(bands))
+    raw = [
+        (math.log10(feats["rms"] + 1e-6) + 3.0) / 3.0,
+        feats["zcr"],
+        feats["centroid"] / 7000.0,
+        feats["pitch"] / 400.0,
+        feats["voiced_ratio"],
+        flatness,
+        spread,
+        *bands,
+        bands[0] + bands[1],
+    ]
+    assert len(raw) == EMBEDDING_DIM, f"embedding dim drift: {len(raw)}"
+    norm = math.sqrt(sum(v * v for v in raw)) or 1.0
+    return [v / norm for v in raw]
+
+
+def cosine_similarity(a: list[float], b: list[float]) -> float:
+    """Cosine similarity of two embeddings in ``[-1, 1]`` (1 = same voice)."""
+    if len(a) != len(b):
+        raise VoiceCloneError(f"cannot compare embeddings of dim {len(a)} and {len(b)}")
+    denom = math.sqrt(sum(v * v for v in a)) * math.sqrt(sum(v * v for v in b))
+    if denom == 0.0:
+        return 0.0
+    return sum(x * y for x, y in zip(a, b)) / denom
+
+
+def clone_from_references(
+    name: str,
+    audios: list[AudioData],
+    reference_files: list[str] | None = None,
+) -> SpeakerProfile:
+    """Build a speaker profile by averaging embeddings across references.
+
+    Base pitch is the mean voiced pitch across the references (120 Hz
+    fallback when no frame is voiced); speaking rate defaults to 150 wpm
+    — estimating it needs a transcript, which the CLI supplies with
+    ``--wpm`` when known. Needs at least one reference clip.
+    """
+    if not audios:
+        raise VoiceCloneError("need at least one reference recording to clone a voice")
+    embeddings = [extract_embedding(a) for a in audios]
+    mean = [sum(e[i] for e in embeddings) / len(embeddings) for i in range(EMBEDDING_DIM)]
+    norm = math.sqrt(sum(v * v for v in mean)) or 1.0
+    pitches = [extract_features(a)["pitch"] for a in audios]
+    voiced_pitches = [p for p in pitches if p > 0]
+    base_pitch = sum(voiced_pitches) / len(voiced_pitches) if voiced_pitches else 120.0
+    return SpeakerProfile(
+        name=name,
+        embedding=[v / norm for v in mean],
+        base_pitch_hz=base_pitch,
+        speaking_rate_wpm=150.0,
+        reference_files=list(reference_files or []),
+    )
