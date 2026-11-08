@@ -24,6 +24,7 @@ This module is deliberately honest about what it is:
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import math
 from dataclasses import dataclass, field
@@ -32,8 +33,8 @@ from typing import Protocol
 from video_dubber.audio import AudioData, concat, make_silence, resample
 
 __all__ = [
-    "SpeakerProfile",
     "ScriptedVoiceCloner",
+    "SpeakerProfile",
     "VoiceCloneError",
     "VoiceCloner",
     "clone_from_references",
@@ -162,9 +163,7 @@ def _autocorr_pitch(frame: list[float], sample_rate: int) -> float:
 def _frame_features(frame: list[float], sample_rate: int) -> dict[str, float]:
     n = len(frame)
     rms = math.sqrt(sum(s * s for s in frame) / n) if n else 0.0
-    crossings = sum(
-        1 for a, b in zip(frame, frame[1:]) if (a < 0) != (b < 0)
-    )
+    crossings = sum(1 for a, b in itertools.pairwise(frame) if (a < 0) != (b < 0))
     zcr = crossings / max(1, n - 1)
     bands = [_goertzel(frame, sample_rate, f) for f in _BAND_FREQS]
     band_total = sum(bands) or 1.0
@@ -332,8 +331,8 @@ def _word_tone(word: str, pitch: float, duration: float, sample_rate: int) -> Au
         for harmonic in range(1, 7):
             freq = pitch * harmonic
             # Boost harmonics near either formant, fall off elsewhere.
-            boost = 1.0 + 2.0 * math.exp(-((freq - f1) / 300.0) ** 2)
-            boost += 1.5 * math.exp(-((freq - f2) / 400.0) ** 2)
+            boost = 1.0 + 2.0 * math.exp(-(((freq - f1) / 300.0) ** 2))
+            boost += 1.5 * math.exp(-(((freq - f2) / 400.0) ** 2))
             value += (boost / harmonic) * math.sin(2.0 * math.pi * freq * t)
         # Attack/decay envelope: 10 ms in, 30 ms out.
         attack = min(1.0, t / 0.01)
@@ -364,7 +363,9 @@ def synthesize_text(
     parts: list[AudioData] = []
     for word in words:
         duration = max(0.12, (len(word) / 5.0) * (60.0 / wpm))
-        parts.append(_word_tone(word, _word_pitch(profile.base_pitch_hz, word), duration, sample_rate))
+        parts.append(
+            _word_tone(word, _word_pitch(profile.base_pitch_hz, word), duration, sample_rate)
+        )
         parts.append(make_silence(0.05, sample_rate))
     return concat(*parts).normalized(0.8)
 
@@ -411,9 +412,7 @@ def adjust_prosody(
     identity — so a shifted profile still matches the original speaker.
     """
     if words_per_minute is not None and words_per_minute <= 0:
-        raise VoiceCloneError(
-            f"words_per_minute must be positive, got {words_per_minute}"
-        )
+        raise VoiceCloneError(f"words_per_minute must be positive, got {words_per_minute}")
     return SpeakerProfile(
         name=profile.name,
         embedding=list(profile.embedding),

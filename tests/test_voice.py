@@ -49,9 +49,7 @@ class TestSpeakerProfile:
         with pytest.raises(VoiceCloneError, match="base_pitch_hz must be positive"):
             SpeakerProfile(name="x", embedding=[0.25] * EMBEDDING_DIM, base_pitch_hz=0)
         with pytest.raises(VoiceCloneError, match="speaking_rate_wpm must be positive"):
-            SpeakerProfile(
-                name="x", embedding=[0.25] * EMBEDDING_DIM, speaking_rate_wpm=-5
-            )
+            SpeakerProfile(name="x", embedding=[0.25] * EMBEDDING_DIM, speaking_rate_wpm=-5)
 
     def test_bad_profile_json_raises(self):
         with pytest.raises(VoiceCloneError, match="invalid speaker profile JSON"):
@@ -129,7 +127,9 @@ class TestCloneFromReferences:
 
 def _profile(pitch: float = 180.0, wpm: float = 150.0) -> SpeakerProfile:
     return SpeakerProfile(
-        name="Test", embedding=[0.25] * EMBEDDING_DIM, base_pitch_hz=pitch,
+        name="Test",
+        embedding=[0.25] * EMBEDDING_DIM,
+        base_pitch_hz=pitch,
         speaking_rate_wpm=wpm,
     )
 

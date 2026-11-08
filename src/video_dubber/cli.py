@@ -18,12 +18,6 @@ import sys
 
 from video_dubber import __version__
 from video_dubber.audio import DEFAULT_SAMPLE_RATE, load_wav, resample, save_wav
-from video_dubber.voice import (
-    ScriptedVoiceCloner,
-    SpeakerProfile,
-    VoiceCloneError,
-    adjust_prosody,
-)
 from video_dubber.extract import ExtractionError, extract_audio
 from video_dubber.transcribe import (
     ScriptedTranscriber,
@@ -41,6 +35,12 @@ from video_dubber.translate import (
     translate_transcript,
 )
 from video_dubber.vad import VadConfig, detect_speech, speech_ratio
+from video_dubber.voice import (
+    ScriptedVoiceCloner,
+    SpeakerProfile,
+    VoiceCloneError,
+    adjust_prosody,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -262,9 +262,7 @@ def _cmd_synthesize(args: argparse.Namespace) -> int:
     with open(args.profile, encoding="utf-8") as fh:
         profile = SpeakerProfile.from_json(fh.read())
     if args.semitones or args.wpm:
-        profile = adjust_prosody(
-            profile, semitones=args.semitones, words_per_minute=args.wpm
-        )
+        profile = adjust_prosody(profile, semitones=args.semitones, words_per_minute=args.wpm)
     audio = ScriptedVoiceCloner().synthesize(args.text, profile)
     save_wav(args.out, audio)
     print(
