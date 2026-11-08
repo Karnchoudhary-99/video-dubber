@@ -21,6 +21,7 @@ The assembly pipeline for one translated transcript:
 
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass
 
@@ -120,15 +121,16 @@ def dub_transcript(
     cloner: VoiceCloner,
     profile: SpeakerProfile,
     original: AudioData | None = None,
-) -> tuple[AudioData, list[float]]:
+) -> tuple[AudioData, list[float], list[tuple[float, float]]]:
     """Render a full dubbed track for a translated transcript.
 
     Each segment is synthesised in the cloned voice, stretched to its
     original window, loudness-matched to the original recording when one
     is given, and placed at its original start time. Returns
-    ``(dub_audio, fit_factors)`` — the per-segment stretch factors, so
-    the report can flag segments that needed extreme stretching. The dub
-    bed spans the transcript's full duration (last word end).
+    ``(dub_audio, fit_factors, placed)`` — the per-segment stretch
+    factors and the ``(start, duration)`` of every placed clip, so the
+    report can measure sync drift. The dub bed spans the transcript's
+    full duration (last word end).
     """
     if not transcript.segments:
         raise AssemblyError("cannot dub an empty transcript")
@@ -146,7 +148,8 @@ def dub_transcript(
         if original is not None:
             fitted = loudness_match(fitted, original)
         placed.append((segment.start, fitted))
-    return assemble_dub(placed, total), fit_factors
+    placed_info = [(start, clip.duration) for start, clip in placed]
+    return assemble_dub(placed, total), fit_factors, placed_info
 
 
 def mux_audio(video_path: str, audio_path: str, out_path: str) -> str:
@@ -189,3 +192,115 @@ def mux_audio(video_path: str, audio_path: str, out_path: str) -> str:
             f"ffmpeg mux failed for {video_path}: {result.stderr.strip()[:300]}"
         )
     return out_path
+
+
+# --- Quality report -----------------------------------------------------------
+
+@dataclass
+class DubReport:
+    """Quality numbers for one dubbed transcript (JSON + Markdown)."""
+
+    segments_dubbed: int
+    total_duration: float
+    mean_sync_drift: float
+    max_sync_drift: float
+    segments_over_drift: int  # segments with drift > 0.10s
+    mean_fit_factor: float
+    max_fit_factor: float
+    extreme_fits: int  # segments with factor outside [0.8, 1.25]
+    loudness_error_db: float | None  # dub RMS vs original RMS, None if no original
+    translation_coverage: float | None  # dictionary coverage, None if unknown
+    verdict: str  # "good" | "review" — review when drift/fit/loudness is off
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "segments_dubbed": self.segments_dubbed,
+                "total_duration": round(self.total_duration, 3),
+                "mean_sync_drift_s": round(self.mean_sync_drift, 3),
+                "max_sync_drift_s": round(self.max_sync_drift, 3),
+                "segments_over_drift": self.segments_over_drift,
+                "mean_fit_factor": round(self.mean_fit_factor, 3),
+                "max_fit_factor": round(self.max_fit_factor, 3),
+                "extreme_fits": self.extreme_fits,
+                "loudness_error_db": (
+                    None if self.loudness_error_db is None else round(self.loudness_error_db, 2)
+                ),
+                "translation_coverage": self.translation_coverage,
+                "verdict": self.verdict,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+
+    def to_markdown(self) -> str:
+        lines = [
+            "# Dub quality report",
+            "",
+            f"- Segments dubbed: {self.segments_dubbed}",
+            f"- Total duration: {self.total_duration:.2f}s",
+            f"- Mean sync drift: {self.mean_sync_drift:.3f}s (max {self.max_sync_drift:.3f}s)",
+            f"- Segments over 0.10s drift: {self.segments_over_drift}",
+            f"- Mean fit factor: {self.mean_fit_factor:.3f} (max {self.max_fit_factor:.3f})",
+            f"- Extreme fits (outside 0.8–1.25): {self.extreme_fits}",
+        ]
+        if self.loudness_error_db is not None:
+            lines.append(f"- Loudness error vs original: {self.loudness_error_db:.2f} dB")
+        if self.translation_coverage is not None:
+            lines.append(f"- Translation coverage: {self.translation_coverage:.0%}")
+        lines.append(f"- Verdict: **{self.verdict}**")
+        return "\n".join(lines) + "\n"
+
+
+def build_report(
+    transcript: Transcript,
+    placed: list[tuple[float, float]],
+    fit_factors: list[float],
+    dub_audio: AudioData,
+    original: AudioData | None = None,
+    translation_coverage: float | None = None,
+) -> DubReport:
+    """Score a dub from the placed clips and the fit factors.
+
+    Sync drift per segment is ``|placed end - segment end|`` — zero when
+    the stretch fit the window exactly, positive when the stretch had to
+    be clamped. The verdict is ``review`` when max drift exceeds 0.25s,
+    any fit is extreme, or loudness is off by more than 3 dB; otherwise
+    ``good``.
+    """
+    timed = [s for s in transcript.segments if s.words]
+    drifts = [
+        abs((start + duration) - segment.end)
+        for segment, (start, duration) in zip(timed, placed)
+    ]
+    mean_drift = sum(drifts) / len(drifts) if drifts else 0.0
+    max_drift = max(drifts, default=0.0)
+    mean_fit = sum(fit_factors) / len(fit_factors) if fit_factors else 1.0
+    max_fit = max(fit_factors, default=1.0)
+    extreme = sum(1 for f in fit_factors if f < 0.8 or f > 1.25)
+    loudness_error: float | None = None
+    if original is not None and original.samples and dub_audio.samples:
+        dub_rms = math.sqrt(sum(s * s for s in dub_audio.samples) / len(dub_audio.samples))
+        orig_rms = math.sqrt(sum(s * s for s in original.samples) / len(original.samples))
+        if dub_rms > 0 and orig_rms > 0:
+            loudness_error = 20 * math.log10(dub_rms / orig_rms)
+    verdict = "good"
+    if (
+        max_drift > 0.25
+        or extreme > 0
+        or (loudness_error is not None and abs(loudness_error) > 3.0)
+    ):
+        verdict = "review"
+    return DubReport(
+        segments_dubbed=len(timed),
+        total_duration=transcript.segments[-1].end if transcript.segments else 0.0,
+        mean_sync_drift=mean_drift,
+        max_sync_drift=max_drift,
+        segments_over_drift=sum(1 for d in drifts if d > 0.10),
+        mean_fit_factor=mean_fit,
+        max_fit_factor=max_fit,
+        extreme_fits=extreme,
+        loudness_error_db=loudness_error,
+        translation_coverage=translation_coverage,
+        verdict=verdict,
+    )
