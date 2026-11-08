@@ -186,10 +186,21 @@ class DictionaryTranslator:
         self._phrases = sorted(
             (k for k in self.dictionary if " " in k), key=lambda k: -len(k.split())
         )
+        self._total_known = 0
+        self._total_words = 0
+        self._all_unknown: list[str] = []
 
     @property
     def name(self) -> str:
         return f"dictionary:{self.source}->{self.target}"
+
+    def reset_stats(self) -> None:
+        """Clear the running coverage totals (called by translate_transcript)."""
+        self._total_known = 0
+        self._total_words = 0
+        self._all_unknown = []
+        self.last_coverage = 0.0
+        self.last_unknown = []
 
     def supported(self, source: str, target: str) -> bool:
         return (source, target) in _BUILTIN or (
@@ -223,6 +234,11 @@ class DictionaryTranslator:
             token = match.group(0)
             if token.isspace() or not any(ch.isalnum() for ch in token):
                 continue
+            # Tokens with no ASCII letters are already target-language text
+            # (e.g. a glossary term applied before this call) or numbers —
+            # they are not untranslated source words and do not count.
+            if not any("a" <= ch.lower() <= "z" for ch in token):
+                continue
             total += 1
             span = match.span()
             covered = any(s <= span[0] and span[1] <= e for s, e in phrase_spans)
@@ -232,6 +248,15 @@ class DictionaryTranslator:
                 unknown.append(token)
         self.last_unknown = unknown
         self.last_coverage = known / total if total else 1.0
+        # Running totals: last_coverage/last_unknown describe everything
+        # translated since the last reset_stats(), so a whole transcript
+        # reports one honest number instead of only its last segment.
+        self._total_known += known
+        self._total_words += total
+        self._all_unknown.extend(unknown)
+        if self._total_words:
+            self.last_coverage = self._total_known / self._total_words
+        self.last_unknown = list(self._all_unknown)
         # 1. Phrase substitution (longest first, case-insensitive, word
         #    boundaries). Already-translated phrases are not in the source
         #    dictionary, so step 2 leaves them untouched.
@@ -321,6 +346,7 @@ class Glossary:
 
     terms: dict[str, str] = field(default_factory=dict)
     last_applied: list[str] = field(default_factory=list, init=False)
+    all_applied: list[str] = field(default_factory=list, init=False)
 
     @classmethod
     def from_json(cls, data: str) -> Glossary:
@@ -350,7 +376,17 @@ class Glossary:
                 applied.append(term)
                 work = pattern.sub(self.terms[term], work)
         self.last_applied = applied
+        # Cumulative across calls, so a whole-transcript run can report
+        # every pinned term (translate_transcript calls apply per segment).
+        for term in applied:
+            if term not in self.all_applied:
+                self.all_applied.append(term)
         return work
+
+    def reset(self) -> None:
+        """Clear the applied-term reports (called by translate_transcript)."""
+        self.last_applied = []
+        self.all_applied = []
 
 
 def translate_text(
@@ -391,6 +427,13 @@ def translate_transcript(
         raise TranslationError(
             "source language unknown: pass --source or use a transcript with a language set"
         )
+    # Fresh per-run stats: a translator/glossary reused across transcripts
+    # must not carry the previous run's coverage or pinned terms.
+    reset = getattr(translator, "reset_stats", None)
+    if callable(reset):
+        reset()
+    if glossary is not None:
+        glossary.reset()
     segments: list[Segment] = []
     for segment in transcript.segments:
         text = translate_text(segment.text, translator, src, target, glossary)

@@ -180,7 +180,25 @@ class TestTranslateTranscript:
         )
         assert out.segments[0].text == "नमस्ते"
 
-    def test_json_round_trip_after_translation(self):
+    def test_coverage_aggregates_across_segments(self):
+        t = DictionaryTranslator(source="en", target="hi")
+        out = translate_transcript(_transcript(), t, "hi")
+        # Segment 1: hello+world known (2/2). Segment 2: good+morning (phrase)
+        # +team known (3/3). Whole transcript: 5/5 = 100%.
+        assert t.last_coverage == 1.0
+        assert t.last_unknown == []
+        assert out.segments[1].text == "सुप्रभात टीम"
+
+    def test_coverage_counts_only_source_words(self):
+        t = DictionaryTranslator(source="en", target="hi")
+        g = Glossary(terms={"Mars": "मंगल"})
+        tr = Transcript(segments=[Segment(words=_words(["Hello", "Mars", "and"]))], language="en")
+        translate_transcript(tr, t, "hi", glossary=g)
+        # "Mars" was pinned by the glossary (not an unknown source word);
+        # only "and" is untranslated: 1 known of 2 counted words.
+        assert t.last_coverage == pytest.approx(0.5)
+        assert t.last_unknown == ["and"]
+        assert g.all_applied == ["Mars"]
         out = translate_transcript(
             _transcript(), DictionaryTranslator(source="en", target="hi"), "hi"
         )
