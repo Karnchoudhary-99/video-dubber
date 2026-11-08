@@ -116,3 +116,139 @@ class TestGlossary:
             Glossary.from_json("{not json")
         with pytest.raises(TranslationError, match="string->string"):
             Glossary.from_json(json.dumps({"a": 1}))
+
+
+# --- translate_transcript: timing preservation -------------------------------
+
+class TestTranslateTranscript:
+    def test_segments_keep_windows_and_speakers(self):
+        out = translate_transcript(
+            _transcript(), DictionaryTranslator(source="en", target="hi"), "hi"
+        )
+        assert out.language == "hi"
+        assert out.source == "dictionary:en->hi"
+        assert len(out.segments) == 2
+        assert (out.segments[0].start, out.segments[0].end) == (0.0, 1.0)
+        assert (out.segments[1].start, out.segments[1].end) == (2.0, 3.5)
+        assert out.segments[0].speaker == "A"
+        assert out.segments[1].speaker == "B"
+        assert out.segments[0].text == "नमस्ते दुनिया"
+        assert out.segments[1].text == "सुप्रभात टीम"
+
+    def test_words_cover_window_exactly_and_monotonically(self):
+        out = translate_transcript(
+            _transcript(), DictionaryTranslator(source="en", target="es"), "es"
+        )
+        for source_seg, target_seg in zip(_transcript().segments, out.segments):
+            assert target_seg.start == source_seg.start
+            assert target_seg.end == source_seg.end
+            starts = [w.start for w in target_seg.words]
+            ends = [w.end for w in target_seg.words]
+            assert starts == sorted(starts)
+            assert all(s < e for s, e in zip(starts, ends))
+
+    def test_longer_words_get_more_time(self):
+        seg = Segment(words=_words(["hi"], 0.0, 1.0))
+        tr = Transcript(segments=[seg], language="en")
+        out = translate_transcript(
+            tr,
+            DictionaryTranslator(
+                source="en", target="es", dictionary={"hi": "hola amigo largo"}
+            ),
+            "es",
+        )
+        durations = [w.end - w.start for w in out.segments[0].words]
+        assert durations[2] > durations[0]  # "largo" outlasts "hola"
+        assert sum(durations) == pytest.approx(1.0)
+
+    def test_empty_segment_stays_empty(self):
+        tr = Transcript(segments=[Segment(words=[]), Segment(words=_words(["hello"]))], language="en")
+        out = translate_transcript(tr, DictionaryTranslator(source="en", target="hi"), "hi")
+        assert out.segments[0].words == []
+        assert out.segments[1].text == "नमस्ते"
+
+    def test_unknown_source_language_raises(self):
+        tr = Transcript(segments=[Segment(words=_words(["hello"]))])
+        with pytest.raises(TranslationError, match="source language unknown"):
+            translate_transcript(tr, DictionaryTranslator(source="en", target="hi"), "hi")
+
+    def test_explicit_source_overrides_transcript_language(self):
+        tr = Transcript(segments=[Segment(words=_words(["hello"]))], language="fr")
+        out = translate_transcript(
+            tr, DictionaryTranslator(source="en", target="hi"), "hi", source="en"
+        )
+        assert out.segments[0].text == "नमस्ते"
+
+    def test_json_round_trip_after_translation(self):
+        out = translate_transcript(
+            _transcript(), DictionaryTranslator(source="en", target="hi"), "hi"
+        )
+        again = Transcript.from_json(out.to_json())
+        assert again.language == "hi"
+        assert again.segments[0].text == out.segments[0].text
+
+    def test_max_chars_chunks_long_segments(self):
+        out = translate_transcript(
+            _transcript(), DictionaryTranslator(source="en", target="hi"), "hi",
+            max_chars=10,
+        )
+        assert len(out.segments) >= 2
+        assert all(len(s.text) <= 10 for s in out.segments)
+        assert out.text.replace(" ", "") == "नमस्तेदुनियासुप्रभातटीम"
+
+
+# --- chunk_segment -----------------------------------------------------------
+
+class TestChunkSegment:
+    def test_short_segment_unchanged(self):
+        seg = Segment(words=_words(["hello", "world"]))
+        assert chunk_segment(seg, max_chars=84) == [seg]
+
+    def test_long_segment_splits_at_word_boundaries(self):
+        words = _words([f"w{i:02d}" for i in range(30)])
+        seg = Segment(words=words)
+        chunks = chunk_segment(seg, max_chars=20)
+        assert len(chunks) > 1
+        assert all(len(c.text) <= 20 for c in chunks)
+        assert "".join(c.text for c in chunks).replace(" ", "") == seg.text.replace(" ", "")
+        # Timing windows are preserved across the split.
+        assert chunks[0].start == seg.start
+        assert chunks[-1].end == seg.end
+        assert all(chunks[i].end <= chunks[i + 1].start for i in range(len(chunks) - 1))
+
+    def test_prefers_break_after_sentence_punctuation(self):
+        words = _words(["aaa", "bbb.", "ccc", "ddd", "eee", "fff", "ggg", "hhh"])
+        seg = Segment(words=words)
+        chunks = chunk_segment(seg, max_chars=10)
+        assert chunks[0].text == "aaa bbb."
+
+    def test_invalid_max_chars_raises(self):
+        seg = Segment(words=_words(["hello"]))
+        with pytest.raises(TranslationError, match="max_chars must be positive"):
+            chunk_segment(seg, max_chars=0)
+
+
+# --- ArgosTranslator ---------------------------------------------------------
+
+class TestArgosTranslator:
+    def test_missing_cli_raises_clear_error(self, monkeypatch):
+        import subprocess
+
+        def fake_run(*args, **kwargs):
+            raise FileNotFoundError("no argos-translate")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        with pytest.raises(TranslationError, match="argos-translate CLI not found"):
+            ArgosTranslator().translate("hello", "en", "hi")
+
+    def test_failed_cli_raises_with_stderr(self, monkeypatch):
+        import subprocess
+
+        class Result:
+            returncode = 1
+            stdout = ""
+            stderr = "package not installed"
+
+        monkeypatch.setattr(subprocess, "run", lambda *a, **k: Result())
+        with pytest.raises(TranslationError, match="package not installed"):
+            ArgosTranslator().translate("hello", "en", "hi")
