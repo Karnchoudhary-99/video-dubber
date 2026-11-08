@@ -45,6 +45,17 @@ class TestFitToWindow:
         _, factor = fit_to_window(audio, 0.2)
         assert factor == pytest.approx(0.6)  # clamped at MIN_STRETCH
 
+    def test_fitted_clip_is_exactly_the_window_long(self):
+        # Regression: resampling rounded the sample count, so a clip
+        # stretched to exactly its window overran the dub bed by one
+        # sample and assemble_dub rejected the whole dub.
+        # (Targets stay inside the 0.6-1.6 clamp range, so no clamping
+        # shortfall is in play — the clip must land exactly on target.)
+        for target in (1.6, 1.0, 2.5, 1.33):
+            fitted, _ = fit_to_window(make_sine(220.0, 1.59), target)
+            assert len(fitted.samples) == int(round(target * 16000))
+            assert fitted.duration == pytest.approx(target, abs=1 / 16000)
+
     def test_empty_audio_is_a_noop(self):
         fitted, factor = fit_to_window(AudioData([], 16000), 1.0)
         assert fitted.samples == []

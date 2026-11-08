@@ -67,7 +67,13 @@ def fit_to_window(audio: AudioData, target_duration: float) -> tuple[AudioData, 
         return AudioData([], audio.sample_rate), 1.0
     factor = target_duration / audio.duration
     clamped = min(MAX_STRETCH, max(MIN_STRETCH, factor))
-    return time_stretch(audio, clamped), clamped
+    stretched = time_stretch(audio, clamped)
+    # Resampling rounds sample counts, so a stretch to exactly the window
+    # can land one sample over it — and assemble_dub rejects overruns.
+    # Trim to the target length; a clip that is short of its window stays
+    # short (the drift in the report is the honest signal for that).
+    target_samples = int(round(target_duration * audio.sample_rate))
+    return AudioData(stretched.samples[:target_samples], audio.sample_rate), clamped
 
 
 def loudness_match(audio: AudioData, reference: AudioData) -> AudioData:
