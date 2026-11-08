@@ -394,8 +394,10 @@ class BatchSummary:
         lines = [
             "# Batch dub report",
             "",
-            f"- Jobs: {self.total} "
-            f"({self.succeeded} ok, {self.failed} failed, {self.skipped} skipped)",
+            (
+                f"- Jobs: {self.total} "
+                f"({self.succeeded} ok, {self.failed} failed, {self.skipped} skipped)"
+            ),
         ]
         if self.mean_wer is not None:
             lines.append(f"- Mean transcription WER: {self.mean_wer:.3f}")

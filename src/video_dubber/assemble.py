@@ -72,7 +72,7 @@ def fit_to_window(audio: AudioData, target_duration: float) -> tuple[AudioData, 
     # can land one sample over it — and assemble_dub rejects overruns.
     # Trim to the target length; a clip that is short of its window stays
     # short (the drift in the report is the honest signal for that).
-    target_samples = int(round(target_duration * audio.sample_rate))
+    target_samples = round(target_duration * audio.sample_rate)
     return AudioData(stretched.samples[:target_samples], audio.sample_rate), clamped
 
 

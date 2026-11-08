@@ -53,7 +53,7 @@ class TestFitToWindow:
         # shortfall is in play — the clip must land exactly on target.)
         for target in (1.6, 1.0, 2.5, 1.33):
             fitted, _ = fit_to_window(make_sine(220.0, 1.59), target)
-            assert len(fitted.samples) == int(round(target * 16000))
+            assert len(fitted.samples) == round(target * 16000)
             assert fitted.duration == pytest.approx(target, abs=1 / 16000)
 
     def test_empty_audio_is_a_noop(self):
