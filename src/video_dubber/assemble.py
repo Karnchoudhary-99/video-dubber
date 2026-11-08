@@ -15,8 +15,9 @@ The assembly pipeline for one translated transcript:
    (:func:`assemble_dub`) and, when a video is given, **mux** the new
    audio track back in with ffmpeg (:func:`mux_audio`).
 5. **Report** (:func:`build_report`): sync drift, fit factors, loudness
-   error, and translation coverage — the numbers a reviewer checks
-   before the dub ships.
+   error, translation coverage, WER against a same-language reference,
+   and a heuristic MOS proxy — the numbers a reviewer checks before
+   the dub ships.
 """
 
 from __future__ import annotations
@@ -27,6 +28,8 @@ from dataclasses import dataclass
 
 from video_dubber.audio import AudioData
 from video_dubber.extract import ExtractionError, _run
+from video_dubber.quality import mos_proxy as _mos_proxy
+from video_dubber.quality import wer_from_transcripts
 from video_dubber.transcript import Transcript
 from video_dubber.voice import SpeakerProfile, VoiceCloner, time_stretch
 
@@ -64,7 +67,13 @@ def fit_to_window(audio: AudioData, target_duration: float) -> tuple[AudioData, 
         return AudioData([], audio.sample_rate), 1.0
     factor = target_duration / audio.duration
     clamped = min(MAX_STRETCH, max(MIN_STRETCH, factor))
-    return time_stretch(audio, clamped), clamped
+    stretched = time_stretch(audio, clamped)
+    # Resampling rounds sample counts, so a stretch to exactly the window
+    # can land one sample over it — and assemble_dub rejects overruns.
+    # Trim to the target length; a clip that is short of its window stays
+    # short (the drift in the report is the honest signal for that).
+    target_samples = round(target_duration * audio.sample_rate)
+    return AudioData(stretched.samples[:target_samples], audio.sample_rate), clamped
 
 
 def loudness_match(audio: AudioData, reference: AudioData) -> AudioData:
@@ -213,7 +222,9 @@ class DubReport:
     extreme_fits: int  # segments with factor outside [0.8, 1.25]
     loudness_error_db: float | None  # dub RMS vs original RMS, None if no original
     translation_coverage: float | None  # dictionary coverage, None if unknown
-    verdict: str  # "good" | "review" — review when drift/fit/loudness is off
+    word_error_rate: float | None = None  # vs a same-language reference, None if not given
+    mos_proxy: float = 5.0  # heuristic 1-5 quality score, NOT a listening test
+    verdict: str = "good"  # "good" | "review" — review when drift/fit/loudness/WER is off
 
     def to_json(self) -> str:
         return json.dumps(
@@ -230,6 +241,10 @@ class DubReport:
                     None if self.loudness_error_db is None else round(self.loudness_error_db, 2)
                 ),
                 "translation_coverage": self.translation_coverage,
+                "word_error_rate": (
+                    None if self.word_error_rate is None else round(self.word_error_rate, 3)
+                ),
+                "mos_proxy": self.mos_proxy,
                 "verdict": self.verdict,
             },
             indent=2,
@@ -251,6 +266,9 @@ class DubReport:
             lines.append(f"- Loudness error vs original: {self.loudness_error_db:.2f} dB")
         if self.translation_coverage is not None:
             lines.append(f"- Translation coverage: {self.translation_coverage:.0%}")
+        if self.word_error_rate is not None:
+            lines.append(f"- Word error rate vs reference: {self.word_error_rate:.3f}")
+        lines.append(f"- MOS proxy (heuristic, 1-5): {self.mos_proxy:.2f}")
         lines.append(f"- Verdict: **{self.verdict}**")
         return "\n".join(lines) + "\n"
 
@@ -262,14 +280,17 @@ def build_report(
     dub_audio: AudioData,
     original: AudioData | None = None,
     translation_coverage: float | None = None,
+    reference_transcript: Transcript | None = None,
 ) -> DubReport:
     """Score a dub from the placed clips and the fit factors.
 
     Sync drift per segment is ``|placed end - segment end|`` — zero when
     the stretch fit the window exactly, positive when the stretch had to
-    be clamped. The verdict is ``review`` when max drift exceeds 0.25s,
-    any fit is extreme, or loudness is off by more than 3 dB; otherwise
-    ``good``.
+    be clamped. With ``reference_transcript`` (a same-language checked
+    transcript of what the dub should say), WER is measured against it.
+    The verdict is ``review`` when max drift exceeds 0.25s, any fit is
+    extreme, loudness is off by more than 3 dB, or WER exceeds 0.25;
+    otherwise ``good``.
     """
     timed = [s for s in transcript.segments if s.words]
     drifts = [
@@ -286,11 +307,15 @@ def build_report(
         orig_rms = math.sqrt(sum(s * s for s in original.samples) / len(original.samples))
         if dub_rms > 0 and orig_rms > 0:
             loudness_error = 20 * math.log10(dub_rms / orig_rms)
+    wer: float | None = None
+    if reference_transcript is not None:
+        wer = wer_from_transcripts(reference_transcript, transcript).wer
     verdict = "good"
     if (
         max_drift > 0.25
         or extreme > 0
         or (loudness_error is not None and abs(loudness_error) > 3.0)
+        or (wer is not None and wer > 0.25)
     ):
         verdict = "review"
     return DubReport(
@@ -304,5 +329,15 @@ def build_report(
         extreme_fits=extreme,
         loudness_error_db=loudness_error,
         translation_coverage=translation_coverage,
+        word_error_rate=wer,
+        mos_proxy=_mos_proxy(
+            mean_drift,
+            max_drift,
+            mean_fit,
+            extreme,
+            len(timed),
+            loudness_error,
+            wer,
+        ),
         verdict=verdict,
     )

@@ -11,7 +11,7 @@ keeping the speaker's voice.
 - [x] Translation pipeline (source → target language, subtitle-aware)
 - [x] Voice cloning (few-shot speaker embedding, TTS synthesis)
 - [x] Dub assembly (lip-sync timing, loudness match, mux back to video)
-- [ ] CLI + batch mode, quality report (WER, MOS proxy, sync drift)
+- [x] CLI + batch mode, quality report (WER, MOS proxy, sync drift)
 - [ ] Self-review checklist, then public
 
 ## Quick start
@@ -159,16 +159,61 @@ video-dubber dub translated.json --profile asha.json \
 - **Quality report** (`--report-out`, `--report-format json|md`):
   sync drift (mean/max), fit factors, loudness error in dB, translation
   coverage, and a verdict — `good`, or `review` when max drift exceeds
-  0.25s, any fit is extreme, or loudness is off by more than 3 dB.
+  0.25s, any fit is extreme, loudness is off by more than 3 dB, or the
+  word error rate against a `--reference` transcript exceeds 0.25.
+- **WER** (`--reference transcript.json`): word error rate between the
+  dubbed text and a same-language ground-truth transcript of what the
+  dub should say — a same-language comparison; comparing across
+  languages just reports ~1.0.
+- **MOS proxy**: a heuristic 1–5 score from drift, fits, loudness and
+  WER. It ranks dubs and flags bad ones; it is not a listening test,
+  and the report says so.
 - Full pipeline in one go: `python examples/demo_dub.py`.
+
+## Batch mode
+
+Dub many videos or transcripts from one manifest file:
+
+```bash
+video-dubber batch manifest.json --out-dir out/
+```
+
+```json
+{
+  "defaults": {"profile": "asha.json", "target": "hi"},
+  "jobs": [
+    {"name": "clip1", "video": "clip1.mp4", "script": "clip1-words.json",
+     "backend": "scripted", "reference": "clip1-truth.json"},
+    {"name": "clip2", "transcript": "clip2.json", "target": "es"}
+  ]
+}
+```
+
+- Each job writes to `out/<name>/` — `dubbed.wav`, `transcript.json`,
+  `translated.json`, `report.json`, and `dubbed.mp4` when a video was
+  muxed. A job is either a `video` (extract → transcribe → translate
+  → dub) or a pre-made `transcript` (translate → dub). With
+  `backend: scripted` a video job needs a `script` word list; otherwise
+  it uses Whisper (`--model` via `model`, default `tiny`).
+- `reference` is a ground-truth transcript of the source audio; the
+  job's transcription WER is scored against it and averaged into the
+  batch summary.
+- Re-running a batch **skips** jobs whose `dubbed.wav` already exists
+  (resume behaviour); `--force` redoes them, `--stop-on-error` stops
+  after the first failure. One bad job never kills the rest — failures
+  are listed with their error in the summary.
+- `batch-report.json` / `batch-report.md` land in the output dir with
+  per-job verdicts, MOS proxies, WERs, and totals.
+- Try it without any models: `python examples/demo_batch.py`.
 
 ## Status
 
 Audio extraction + transcription are done (62 tests). Translation is done
 (94 tests). Voice cloning is done (126 tests). Dub assembly is done
-(147 tests). Remaining: CLI + batch mode polish, then the self-review
-checklist and public flip — the project stays private per the 5–7 day
-pace rule (started 2026-11-08).
+(147 tests). Batch mode + quality metrics are done (185 tests).
+Remaining: the self-review checklist and public flip — the project
+stays private per the 5–7 day pace rule (started 2026-11-08, earliest
+completion 2026-11-13).
 
 ## License
 

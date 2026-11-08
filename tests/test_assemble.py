@@ -1,5 +1,6 @@
 """Tests for dub assembly: fitting, loudness, placement, quality report."""
 
+import json
 import math
 
 import pytest
@@ -43,6 +44,17 @@ class TestFitToWindow:
         audio = make_sine(220.0, 1.0)
         _, factor = fit_to_window(audio, 0.2)
         assert factor == pytest.approx(0.6)  # clamped at MIN_STRETCH
+
+    def test_fitted_clip_is_exactly_the_window_long(self):
+        # Regression: resampling rounded the sample count, so a clip
+        # stretched to exactly its window overran the dub bed by one
+        # sample and assemble_dub rejected the whole dub.
+        # (Targets stay inside the 0.6-1.6 clamp range, so no clamping
+        # shortfall is in play — the clip must land exactly on target.)
+        for target in (1.6, 1.0, 2.5, 1.33):
+            fitted, _ = fit_to_window(make_sine(220.0, 1.59), target)
+            assert len(fitted.samples) == round(target * 16000)
+            assert fitted.duration == pytest.approx(target, abs=1 / 16000)
 
     def test_empty_audio_is_a_noop(self):
         fitted, factor = fit_to_window(AudioData([], 16000), 1.0)
@@ -155,6 +167,40 @@ class TestBuildReport:
         report = build_report(transcript, [(0.0, 0.5)], [1.6], dub)
         assert report.verdict == "review"
         assert report.extreme_fits == 1
+
+    def test_mos_proxy_is_high_for_clean_dub(self):
+        transcript = Transcript(segments=[Segment(words=_words(["hello"], 0.0))], language="hi")
+        dub, factors, placed = dub_transcript(transcript, ScriptedVoiceCloner(), _profile())
+        report = build_report(transcript, placed, factors, dub)
+        # Not exactly 5.0: the demo synthesis quantises word timings, so a
+        # real dub always carries a few dozen ms of drift.
+        assert report.mos_proxy >= 4.5
+        assert report.word_error_rate is None
+        assert json.loads(report.to_json())["mos_proxy"] == report.mos_proxy
+        assert "MOS proxy" in report.to_markdown()
+
+    def test_wer_zero_when_dub_matches_reference(self):
+        transcript = Transcript(
+            segments=[Segment(words=_words(["hello", "mars"], 0.0))], language="hi"
+        )
+        dub, factors, placed = dub_transcript(transcript, ScriptedVoiceCloner(), _profile())
+        report = build_report(transcript, placed, factors, dub, reference_transcript=transcript)
+        assert report.word_error_rate == 0.0
+        assert report.verdict == "good"
+        assert "Word error rate vs reference: 0.000" in report.to_markdown()
+
+    def test_wer_flags_wrong_words_and_drops_mos(self):
+        transcript = Transcript(
+            segments=[Segment(words=_words(["hello", "mars"], 0.0))], language="hi"
+        )
+        reference = Transcript(
+            segments=[Segment(words=_words(["hello", "venus"], 0.0))], language="hi"
+        )
+        dub, factors, placed = dub_transcript(transcript, ScriptedVoiceCloner(), _profile())
+        report = build_report(transcript, placed, factors, dub, reference_transcript=reference)
+        assert report.word_error_rate == pytest.approx(0.5)
+        assert report.verdict == "review"  # WER 0.5 > 0.25 threshold
+        assert report.mos_proxy < 5.0
 
     def test_loudness_error_measured_against_original(self):
         transcript = Transcript(segments=[Segment(words=_words(["hello"], 0.0))], language="hi")

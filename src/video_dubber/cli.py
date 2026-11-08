@@ -13,6 +13,7 @@ Subcommands (see ``video-dubber <cmd> --help`` for details):
 * ``synthesize`` — render text as audio in a cloned voice (demo synthesis).
 * ``dub`` — render a full dubbed track from a translated transcript and
   a speaker profile, with a quality report (and optional video mux).
+* ``batch`` — dub many videos/transcripts from one manifest JSON file.
 """
 
 import argparse
@@ -26,6 +27,12 @@ from video_dubber.assemble import (
     mux_audio,
 )
 from video_dubber.audio import DEFAULT_SAMPLE_RATE, load_wav, resample, save_wav
+from video_dubber.batch import (
+    BatchError,
+    BatchManifest,
+    run_batch,
+    summarize,
+)
 from video_dubber.extract import ExtractionError, extract_audio
 from video_dubber.transcribe import (
     ScriptedTranscriber,
@@ -149,10 +156,29 @@ def build_parser() -> argparse.ArgumentParser:
     p_dub.add_argument("--mux-out", help="Output video path (needs --video).")
     p_dub.add_argument("--report-out", help="Write the quality report to this file.")
     p_dub.add_argument(
+        "--reference",
+        help="Same-language ground-truth transcript (JSON) of what the dub should "
+        "say; enables WER in the quality report.",
+    )
+    p_dub.add_argument(
         "--report-format",
         choices=["json", "md"],
         default="json",
         help="Quality report format (default json).",
+    )
+
+    p_batch = sub.add_parser("batch", help="Dub many jobs from a manifest JSON file.")
+    p_batch.add_argument("manifest", help="Manifest JSON file (see README for the format).")
+    p_batch.add_argument("--out-dir", required=True, help="Output directory; one subdir per job.")
+    p_batch.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-run jobs whose dubbed WAV already exists.",
+    )
+    p_batch.add_argument(
+        "--stop-on-error",
+        action="store_true",
+        help="Stop the batch after the first failed job.",
     )
     return parser
 
@@ -304,16 +330,25 @@ def _cmd_dub(args: argparse.Namespace) -> int:
     with open(args.profile, encoding="utf-8") as fh:
         profile = SpeakerProfile.from_json(fh.read())
     original = resample(load_wav(args.original), DEFAULT_SAMPLE_RATE) if args.original else None
+    reference = None
+    if args.reference:
+        with open(args.reference, encoding="utf-8") as fh:
+            reference = Transcript.from_json(fh.read())
     dub_audio, fit_factors, placed = dub_transcript(
         transcript, ScriptedVoiceCloner(), profile, original
     )
     save_wav(args.out, dub_audio)
-    report = build_report(transcript, placed, fit_factors, dub_audio, original)
+    report = build_report(
+        transcript, placed, fit_factors, dub_audio, original, reference_transcript=reference
+    )
     print(f"dubbed {report.segments_dubbed} segments, {dub_audio.duration:.2f}s -> {args.out}")
     print(
         f"sync drift mean {report.mean_sync_drift:.3f}s / max {report.max_sync_drift:.3f}s, "
-        f"mean fit {report.mean_fit_factor:.2f}, verdict: {report.verdict}"
+        f"mean fit {report.mean_fit_factor:.2f}, MOS proxy {report.mos_proxy:.2f}, "
+        f"verdict: {report.verdict}"
     )
+    if report.word_error_rate is not None:
+        print(f"word error rate vs reference: {report.word_error_rate:.3f}")
     if args.report_out:
         text = report.to_json() if args.report_format == "json" else report.to_markdown()
         with open(args.report_out, "w", encoding="utf-8") as fh:
@@ -323,6 +358,28 @@ def _cmd_dub(args: argparse.Namespace) -> int:
         mux_audio(args.video, args.out, args.mux_out)
         print(f"muxed dub into {args.mux_out}")
     return 0
+
+
+def _cmd_batch(args: argparse.Namespace) -> int:
+    manifest = BatchManifest.from_json_file(args.manifest)
+    results = run_batch(manifest, args.out_dir, force=args.force, stop_on_error=args.stop_on_error)
+    for result in results:
+        if result.status == "ok":
+            print(
+                f"ok {result.name} (verdict {result.verdict}, "
+                f"MOS proxy {result.mos_proxy}, {result.duration_s:.1f}s)"
+            )
+        elif result.status == "skipped":
+            print(f"skipped {result.name} (dubbed WAV already exists, use --force to redo)")
+        else:
+            print(f"failed {result.name}: {result.error}", file=sys.stderr)
+    summary = summarize(results, args.out_dir)
+    print(
+        f"batch done: {summary.succeeded} ok, {summary.failed} failed, "
+        f"{summary.skipped} skipped out of {summary.total}"
+    )
+    print(f"reports: {args.out_dir}/batch-report.json, {args.out_dir}/batch-report.md")
+    return 1 if summary.failed else 0
 
 
 def main(argv=None) -> int:
@@ -348,8 +405,11 @@ def main(argv=None) -> int:
             return _cmd_synthesize(args)
         if args.command == "dub":
             return _cmd_dub(args)
+        if args.command == "batch":
+            return _cmd_batch(args)
     except (
         AssemblyError,
+        BatchError,
         ExtractionError,
         TranscriptionError,
         TranslationError,

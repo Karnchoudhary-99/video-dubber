@@ -499,3 +499,86 @@ def test_cli_dub_video_without_mux_out_fails(tmp_path, capsys):
         == 2
     )
     assert "--video needs --mux-out" in capsys.readouterr().err
+
+
+def _write_source_transcript(path, text="hello mars good morning"):
+    words = [
+        {"text": w, "start": i * 0.4, "end": (i + 1) * 0.4} for i, w in enumerate(text.split())
+    ]
+    path.write_text(
+        Transcript(segments=[{"words": words, "speaker": None}], language="en").to_json()
+    )
+
+
+def _write_batch_manifest(path, jobs, defaults=None):
+    manifest = {"jobs": jobs}
+    if defaults is not None:
+        manifest["defaults"] = defaults
+    path.write_text(json.dumps(manifest))
+
+
+def _batch_fixture(tmp_path):
+    """Two transcript jobs (hi + es) sharing one profile; returns (manifest, out)."""
+    src1 = tmp_path / "src1.json"
+    _write_source_transcript(src1)
+    src2 = tmp_path / "src2.json"
+    _write_source_transcript(src2, "good morning mars")
+    profile = tmp_path / "asha.json"
+    _write_dub_profile(profile)
+    manifest = tmp_path / "manifest.json"
+    _write_batch_manifest(
+        manifest,
+        [
+            {"name": "clip1", "transcript": str(src1), "target": "hi"},
+            {"name": "clip2", "transcript": str(src2), "target": "es"},
+        ],
+        defaults={"profile": str(profile)},
+    )
+    return manifest, tmp_path / "out"
+
+
+def test_cli_batch_two_jobs(tmp_path, capsys):
+    manifest, out = _batch_fixture(tmp_path)
+    assert main(["batch", str(manifest), "--out-dir", str(out)]) == 0
+    assert (out / "clip1" / "dubbed.wav").exists()
+    assert (out / "clip2" / "dubbed.wav").exists()
+    report = json.loads((out / "batch-report.json").read_text(encoding="utf-8"))
+    assert report["succeeded"] == 2
+    assert report["failed"] == 0
+    assert (out / "batch-report.md").exists()
+    output = capsys.readouterr().out
+    assert "ok clip1" in output and "ok clip2" in output
+    assert "batch done: 2 ok, 0 failed, 0 skipped out of 2" in output
+
+
+def test_cli_batch_second_run_skips(tmp_path, capsys):
+    manifest, out = _batch_fixture(tmp_path)
+    assert main(["batch", str(manifest), "--out-dir", str(out)]) == 0
+    capsys.readouterr()
+    assert main(["batch", str(manifest), "--out-dir", str(out)]) == 0
+    output = capsys.readouterr().out
+    assert "skipped clip1" in output and "skipped clip2" in output
+    assert "0 ok, 0 failed, 2 skipped" in output
+
+
+def test_cli_batch_failure_does_not_stop_others(tmp_path, capsys):
+    manifest, out = _batch_fixture(tmp_path)
+    # Give clip2 a corrupt profile: the manifest only checks files exist,
+    # so the job starts and fails at runtime while clip1 still succeeds.
+    bad_profile = tmp_path / "bad.json"
+    bad_profile.write_text("{not json")
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    data["jobs"][1]["profile"] = str(bad_profile)
+    manifest.write_text(json.dumps(data))
+    assert main(["batch", str(manifest), "--out-dir", str(out)]) == 1
+    assert (out / "clip1" / "dubbed.wav").exists()
+    assert not (out / "clip2" / "dubbed.wav").exists()
+    err = capsys.readouterr().err
+    assert "failed clip2" in err
+    report = json.loads((out / "batch-report.json").read_text(encoding="utf-8"))
+    assert report["succeeded"] == 1 and report["failed"] == 1
+
+
+def test_cli_batch_missing_manifest(tmp_path, capsys):
+    assert main(["batch", "nope.json", "--out-dir", str(tmp_path / "out")]) == 1
+    assert "error:" in capsys.readouterr().err

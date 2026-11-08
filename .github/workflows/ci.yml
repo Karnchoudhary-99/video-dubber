@@ -15,3 +15,4 @@ jobs:
       - run: ruff format --check src tests examples
       - run: pytest -q
       - run: python examples/demo.py
+      - run: python examples/demo_batch.py
