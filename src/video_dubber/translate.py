@@ -316,3 +316,55 @@ def translate_text(
     if glossary is not None:
         text = glossary.apply(text)
     return translator.translate(text, source, target)
+
+
+def translate_transcript(
+    transcript: Transcript,
+    translator: Translator,
+    target: str,
+    source: str | None = None,
+    glossary: Glossary | None = None,
+) -> Transcript:
+    """Translate a whole transcript, preserving segment timing windows.
+
+    Each translated segment spans exactly the same ``[start, end]`` window
+    as its source segment; translated words share that window in
+    proportion to their character length (longer words get more time).
+    Speaker labels survive; the result's ``language`` is the target and
+    ``source`` records the backend that produced it. Empty segments stay
+    empty. Raises :class:`TranslationError` if the source language is
+    unknown and no ``source`` was given.
+    """
+    src = source or transcript.language
+    if not src:
+        raise TranslationError(
+            "source language unknown: pass --source or use a transcript "
+            "with a language set"
+        )
+    segments: list[Segment] = []
+    for segment in transcript.segments:
+        text = translate_text(segment.text, translator, src, target, glossary)
+        words = _retime(segment, text.split(), segment.mean_confidence)
+        segments.append(Segment(words=words, speaker=segment.speaker))
+    return Transcript(segments=segments, language=target, source=translator.name)
+
+
+def _retime(segment: Segment, words: list[str], confidence: float) -> list[Word]:
+    """Spread ``words`` across the segment window, proportional to length.
+
+    A word's share is ``len(word) + 1`` (the trailing space it would have
+    had in speech); the last word ends exactly at the segment end so the
+    total duration is preserved bit-for-bit.
+    """
+    if not words or segment.duration <= 0:
+        return [Word(text=w, start=segment.start, end=segment.end, confidence=confidence) for w in words]
+    weights = [len(w) + 1 for w in words]
+    total = sum(weights)
+    out: list[Word] = []
+    cursor = segment.start
+    for index, (word, weight) in enumerate(zip(words, weights)):
+        share = segment.duration * weight / total
+        end = segment.end if index == len(words) - 1 else cursor + share
+        out.append(Word(text=word, start=cursor, end=end, confidence=confidence))
+        cursor = end
+    return out
