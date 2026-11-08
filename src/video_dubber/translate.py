@@ -260,6 +260,56 @@ def _match_case(source_token: str, replacement: str) -> str:
 
 
 @dataclass
+class ArgosTranslator:
+    """Translation via the ``argos-translate`` CLI (LibreTranslate models).
+
+    Mirrors :class:`~video_dubber.transcribe.WhisperCliTranscriber`: the
+    heavy model lives in an external tool, this class is just the adapter.
+    Requires ``argos-translate`` on PATH with the ``source -> target``
+    language package installed (``argostranslate-cli``). Each call is one
+    subprocess invocation, so callers translating a whole transcript
+    should prefer :func:`translate_transcript` with a dictionary backend
+    for demos and reserve Argos for the final pass.
+    """
+
+    timeout: float = 120.0
+
+    @property
+    def name(self) -> str:
+        return "argos-translate"
+
+    def translate(self, text: str, source: str, target: str) -> str:
+        if not text.strip():
+            return text
+        try:
+            result = subprocess.run(
+                ["argos-translate", "--from-lang", source, "--to-lang", target, text],
+                capture_output=True,
+                text=True,
+                timeout=self.timeout,
+            )
+        except FileNotFoundError as exc:
+            raise TranslationError(
+                "argos-translate CLI not found on PATH; install it "
+                "(pip install argostranslate) and the language package, "
+                "or use --backend dictionary"
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise TranslationError(
+                f"argos-translate timed out after {self.timeout}s"
+            ) from exc
+        if result.returncode != 0:
+            raise TranslationError(
+                f"argos-translate failed (exit {result.returncode}): "
+                f"{result.stderr.strip()[:300]}"
+            )
+        translated = result.stdout.strip()
+        if not translated:
+            raise TranslationError("argos-translate returned empty output")
+        return translated
+
+
+@dataclass
 class Glossary:
     """Caller-supplied term overrides, applied before any backend runs.
 
