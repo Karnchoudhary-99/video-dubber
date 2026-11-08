@@ -107,3 +107,99 @@ class SpeakerProfile:
             )
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
             raise VoiceCloneError(f"invalid speaker profile JSON: {exc}") from exc
+
+
+# --- Spectral features (stdlib only) -----------------------------------------
+# Frames are 25 ms with a 10 ms hop. Per frame we measure RMS, zero-crossing
+# rate, band energies at 8 log-spaced frequencies (Goertzel — cheap and
+# dependency-free), a spectral centroid from those bands, and a pitch
+# estimate by autocorrelation. Aggregated over voiced frames, these
+# separate speakers by timbre well enough for matching and demo synthesis.
+
+_FRAME_MS = 25
+_HOP_MS = 10
+_BAND_FREQS = (100, 200, 400, 800, 1600, 3200, 4800, 7000)
+
+
+def _goertzel(samples: list[float], sample_rate: int, freq: float) -> float:
+    """Magnitude of one DFT bin, computed without an FFT library."""
+    if not samples:
+        return 0.0
+    coeff = 2.0 * math.cos(2.0 * math.pi * freq / sample_rate)
+    s1 = s2 = 0.0
+    for sample in samples:
+        s0 = sample + coeff * s1 - s2
+        s2, s1 = s1, s0
+    power = s1 * s1 + s2 * s2 - coeff * s1 * s2
+    return math.sqrt(max(0.0, power)) / len(samples)
+
+
+def _autocorr_pitch(frame: list[float], sample_rate: int) -> float:
+    """Fundamental estimate (Hz) by autocorrelation, 0.0 if unvoiced.
+
+    Searches lags for 50–400 Hz; a frame counts as voiced only when the
+    best normalised autocorrelation exceeds 0.3 (silence and noise stay 0).
+    """
+    n = len(frame)
+    if n < 4:
+        return 0.0
+    mean = sum(frame) / n
+    centred = [s - mean for s in frame]
+    energy = sum(s * s for s in centred)
+    if energy <= 0.0:
+        return 0.0
+    min_lag = max(1, sample_rate // 400)
+    max_lag = min(n - 1, sample_rate // 50)
+    best_lag, best_value = 0, 0.0
+    for lag in range(min_lag, max_lag + 1):
+        corr = sum(centred[i] * centred[i + lag] for i in range(n - lag)) / energy
+        if corr > best_value:
+            best_value, best_lag = corr, lag
+    if best_value < 0.3:
+        return 0.0
+    return sample_rate / best_lag
+
+
+def _frame_features(frame: list[float], sample_rate: int) -> dict[str, float]:
+    n = len(frame)
+    rms = math.sqrt(sum(s * s for s in frame) / n) if n else 0.0
+    crossings = sum(
+        1 for a, b in zip(frame, frame[1:]) if (a < 0) != (b < 0)
+    )
+    zcr = crossings / max(1, n - 1)
+    bands = [_goertzel(frame, sample_rate, f) for f in _BAND_FREQS]
+    band_total = sum(bands) or 1.0
+    centroid = sum(f * b for f, b in zip(_BAND_FREQS, bands)) / band_total
+    return {
+        "rms": rms,
+        "zcr": zcr,
+        "centroid": centroid,
+        "pitch": _autocorr_pitch(frame, sample_rate),
+        **{f"band{i}": b / band_total for i, b in enumerate(bands)},
+    }
+
+
+def extract_features(audio: AudioData) -> dict[str, float]:
+    """Aggregate per-frame spectral features over the voiced frames.
+
+    Returns means of RMS, zero-crossing rate, spectral centroid, pitch
+    (voiced frames only) and the 8 normalised band energies. Raises
+    :class:`VoiceCloneError` for empty or silent audio.
+    """
+    rate = audio.sample_rate
+    frame_len = max(64, int(rate * _FRAME_MS / 1000))
+    hop = max(32, int(rate * _HOP_MS / 1000))
+    frames = [
+        audio.samples[i : i + frame_len]
+        for i in range(0, max(1, len(audio.samples) - frame_len + 1), hop)
+    ]
+    if not frames or not any(frames):
+        raise VoiceCloneError("cannot extract features from empty audio")
+    per_frame = [_frame_features(f, rate) for f in frames]
+    voiced = [f for f in per_frame if f["rms"] > 0.01]
+    if not voiced:
+        raise VoiceCloneError("reference audio is silent (no frame above the noise floor)")
+    keys = list(per_frame[0])
+    out = {k: sum(f[k] for f in voiced) / len(voiced) for k in keys}
+    out["voiced_ratio"] = len(voiced) / len(per_frame)
+    return out
