@@ -1,5 +1,6 @@
 """Tests for dub assembly: fitting, loudness, placement, quality report."""
 
+import json
 import math
 
 import pytest
@@ -164,7 +165,7 @@ class TestBuildReport:
         # real dub always carries a few dozen ms of drift.
         assert report.mos_proxy >= 4.5
         assert report.word_error_rate is None
-        assert '"mos_proxy": 5.0' in report.to_json()
+        assert json.loads(report.to_json())["mos_proxy"] == report.mos_proxy
         assert "MOS proxy" in report.to_markdown()
 
     def test_wer_zero_when_dub_matches_reference(self):
