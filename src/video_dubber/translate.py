@@ -257,3 +257,62 @@ def _match_case(source_token: str, replacement: str) -> str:
     if source_token[:1].isupper():
         return replacement[:1].upper() + replacement[1:]
     return replacement
+
+
+@dataclass
+class Glossary:
+    """Caller-supplied term overrides, applied before any backend runs.
+
+    Brand names, character names and domain terms must survive translation
+    verbatim or with a fixed rendering — e.g. ``{"Mars Rovers": "मार्स
+    रोवर्स"}`` or ``{"NASA": "NASA"}`` (keep the English spelling). Terms
+    are matched case-insensitively with word boundaries, longest first,
+    and the applied overrides are reported so the dub report can show
+    exactly which terms were pinned.
+    """
+
+    terms: dict[str, str] = field(default_factory=dict)
+    last_applied: list[str] = field(default_factory=list, init=False)
+
+    @classmethod
+    def from_json(cls, data: str) -> Glossary:
+        """Parse ``{"source term": "target term", ...}`` JSON."""
+        try:
+            raw = json.loads(data)
+        except json.JSONDecodeError as exc:
+            raise TranslationError(f"invalid glossary JSON: {exc}") from exc
+        if not isinstance(raw, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in raw.items()
+        ):
+            raise TranslationError("glossary JSON must be an object of string->string")
+        return cls(terms=dict(raw))
+
+    @classmethod
+    def from_json_file(cls, path: str) -> Glossary:
+        with open(path, encoding="utf-8") as fh:
+            return cls.from_json(fh.read())
+
+    def apply(self, text: str) -> str:
+        """Replace glossary terms in ``text``; records what was applied."""
+        applied: list[str] = []
+        work = text
+        for term in sorted(self.terms, key=lambda t: -len(t.split())):
+            pattern = re.compile(rf"\b{re.escape(term)}\b", re.IGNORECASE)
+            if pattern.search(work):
+                applied.append(term)
+                work = pattern.sub(self.terms[term], work)
+        self.last_applied = applied
+        return work
+
+
+def translate_text(
+    text: str,
+    translator: Translator,
+    source: str,
+    target: str,
+    glossary: Glossary | None = None,
+) -> str:
+    """Translate one string, applying the glossary first if given."""
+    if glossary is not None:
+        text = glossary.apply(text)
+    return translator.translate(text, source, target)
