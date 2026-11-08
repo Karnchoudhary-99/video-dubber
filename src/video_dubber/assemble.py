@@ -21,17 +21,13 @@ The assembly pipeline for one translated transcript:
 
 from __future__ import annotations
 
-import json
 import math
-import subprocess
-import tempfile
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import dataclass
 
-from video_dubber.audio import AudioData, concat, load_wav, make_silence, save_wav
+from video_dubber.audio import AudioData
 from video_dubber.extract import ExtractionError, _run
 from video_dubber.transcript import Transcript
-from video_dubber.voice import VoiceCloner, time_stretch
+from video_dubber.voice import SpeakerProfile, VoiceCloner, time_stretch
 
 __all__ = [
     "AssemblyError",
@@ -117,3 +113,79 @@ def assemble_dub(
         for i, sample in enumerate(clip.samples):
             bed[offset + i] = max(-1.0, min(1.0, bed[offset + i] + sample))
     return AudioData(bed, sample_rate)
+
+
+def dub_transcript(
+    transcript: Transcript,
+    cloner: VoiceCloner,
+    profile: SpeakerProfile,
+    original: AudioData | None = None,
+) -> tuple[AudioData, list[float]]:
+    """Render a full dubbed track for a translated transcript.
+
+    Each segment is synthesised in the cloned voice, stretched to its
+    original window, loudness-matched to the original recording when one
+    is given, and placed at its original start time. Returns
+    ``(dub_audio, fit_factors)`` — the per-segment stretch factors, so
+    the report can flag segments that needed extreme stretching. The dub
+    bed spans the transcript's full duration (last word end).
+    """
+    if not transcript.segments:
+        raise AssemblyError("cannot dub an empty transcript")
+    total = transcript.segments[-1].end
+    if total <= 0:
+        raise AssemblyError("transcript has no timed segments to dub")
+    placed: list[tuple[float, AudioData]] = []
+    fit_factors: list[float] = []
+    for segment in transcript.segments:
+        if not segment.words:
+            continue
+        spoken = cloner.synthesize(segment.text, profile)
+        fitted, factor = fit_to_window(spoken, segment.duration)
+        fit_factors.append(factor)
+        if original is not None:
+            fitted = loudness_match(fitted, original)
+        placed.append((segment.start, fitted))
+    return assemble_dub(placed, total), fit_factors
+
+
+def mux_audio(video_path: str, audio_path: str, out_path: str) -> str:
+    """Replace a video's audio track with ``audio_path`` (ffmpeg).
+
+    The video stream is copied untouched; the new audio is encoded as
+    AAC and the output is cut to the shorter of the two streams
+    (``-shortest``) so a dub that runs long does not freeze the last
+    frame. Returns ``out_path``. Raises :class:`AssemblyError` when
+    ffmpeg is missing or fails.
+    """
+    try:
+        result = _run(
+            [
+                "ffmpeg",
+                "-y",
+                "-v",
+                "error",
+                "-i",
+                video_path,
+                "-i",
+                audio_path,
+                "-map",
+                "0:v:0",
+                "-map",
+                "1:a:0",
+                "-c:v",
+                "copy",
+                "-c:a",
+                "aac",
+                "-shortest",
+                out_path,
+            ],
+            "mux",
+        )
+    except ExtractionError as exc:
+        raise AssemblyError(str(exc)) from exc
+    if result.returncode != 0:
+        raise AssemblyError(
+            f"ffmpeg mux failed for {video_path}: {result.stderr.strip()[:300]}"
+        )
+    return out_path
