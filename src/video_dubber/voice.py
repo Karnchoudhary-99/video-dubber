@@ -26,11 +26,10 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import struct
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from video_dubber.audio import AudioData, concat, make_silence, make_sine
+from video_dubber.audio import AudioData, concat, make_silence
 
 __all__ = [
     "SpeakerProfile",
@@ -272,3 +271,128 @@ def clone_from_references(
         speaking_rate_wpm=150.0,
         reference_files=list(reference_files or []),
     )
+
+
+class VoiceCloner(Protocol):
+    """Clones a voice from reference audio and synthesises speech in it.
+
+    Implementations raise :class:`VoiceCloneError` on failure. The
+    shipped implementation is :class:`ScriptedVoiceCloner` (a labelled
+    demo double); a real TTS backend slots in here behind the same
+    protocol, exactly like Whisper/Argos do for STT/translation.
+    """
+
+    def clone(
+        self,
+        name: str,
+        audios: list[AudioData],
+        reference_files: list[str] | None = None,
+    ) -> SpeakerProfile: ...
+
+    def synthesize(
+        self, text: str, profile: SpeakerProfile, words_per_minute: float | None = None
+    ) -> AudioData: ...
+
+    @property
+    def name(self) -> str: ...
+
+
+# --- Formant-ish synthesis (demo double) -------------------------------------
+# A word is a short harmonic tone: the fundamental is the speaker's base
+# pitch (varied deterministically per word, the way real intonation rises
+# and falls), and the harmonic amplitudes are boosted near the first two
+# formants of the word's dominant vowel. An attack/decay envelope keeps
+# words from clicking. It is recognisably speech-shaped, not speech — the
+# docstring says so, and the class name says so.
+
+_VOWEL_FORMANTS: dict[str, tuple[float, float]] = {
+    "a": (730, 1090),
+    "e": (530, 1840),
+    "i": (270, 2290),
+    "o": (570, 840),
+    "u": (300, 870),
+}
+
+
+def _word_pitch(base_pitch: float, word: str) -> float:
+    """Deterministic per-word pitch: base pitch varied ±10% by word hash."""
+    digest = hashlib.md5(word.encode("utf-8")).digest()
+    jitter = (digest[0] / 255.0 - 0.5) * 0.2  # [-0.1, +0.1]
+    return base_pitch * (1.0 + jitter)
+
+
+def _word_tone(word: str, pitch: float, duration: float, sample_rate: int) -> AudioData:
+    vowel = next((ch for ch in word.lower() if ch in _VOWEL_FORMANTS), "a")
+    f1, f2 = _VOWEL_FORMANTS[vowel]
+    count = max(1, int(duration * sample_rate))
+    samples: list[float] = []
+    for i in range(count):
+        t = i / sample_rate
+        value = 0.0
+        for harmonic in range(1, 7):
+            freq = pitch * harmonic
+            # Boost harmonics near either formant, fall off elsewhere.
+            boost = 1.0 + 2.0 * math.exp(-((freq - f1) / 300.0) ** 2)
+            boost += 1.5 * math.exp(-((freq - f2) / 400.0) ** 2)
+            value += (boost / harmonic) * math.sin(2.0 * math.pi * freq * t)
+        # Attack/decay envelope: 10 ms in, 30 ms out.
+        attack = min(1.0, t / 0.01)
+        decay = min(1.0, (duration - t) / 0.03) if duration > 0.04 else 1.0
+        samples.append(0.25 * value * attack * max(0.0, decay))
+    return AudioData(samples, sample_rate)
+
+
+def synthesize_text(
+    text: str,
+    profile: SpeakerProfile,
+    words_per_minute: float | None = None,
+    sample_rate: int = DEFAULT_SAMPLE_RATE,
+) -> AudioData:
+    """Render ``text`` as audio in the profile's voice (demo synthesis).
+
+    Word duration follows the speaking rate (5 chars ≈ 1 word); words are
+    separated by a 50 ms gap. The result's duration is therefore
+    predictable from the text, which is what dub assembly relies on to
+    stretch it into the segment window. Empty text returns silence.
+    """
+    wpm = words_per_minute or profile.speaking_rate_wpm
+    if wpm <= 0:
+        raise VoiceCloneError(f"words_per_minute must be positive, got {wpm}")
+    words = text.split()
+    if not words:
+        return AudioData([], sample_rate)
+    parts: list[AudioData] = []
+    for word in words:
+        duration = max(0.12, (len(word) / 5.0) * (60.0 / wpm))
+        parts.append(_word_tone(word, _word_pitch(profile.base_pitch_hz, word), duration, sample_rate))
+        parts.append(make_silence(0.05, sample_rate))
+    return concat(*parts).normalized(0.8)
+
+
+@dataclass
+class ScriptedVoiceCloner:
+    """Demo voice cloner: real embeddings, formant-style synthesis.
+
+    ``clone`` extracts a genuine embedding from the references (same
+    features as :func:`extract_embedding`); ``synthesize`` renders text
+    with :func:`synthesize_text`. The voice *identity* is real — two
+    different speakers get measurably different embeddings — while the
+    *sound* is a labelled stand-in for a neural TTS backend.
+    """
+
+    @property
+    def name(self) -> str:
+        return "scripted"
+
+    def clone(
+        self,
+        name: str,
+        audios: list[AudioData],
+        reference_files: list[str] | None = None,
+    ) -> SpeakerProfile:
+        return clone_from_references(name, audios, reference_files)
+
+    def synthesize(
+        self, text: str, profile: SpeakerProfile, words_per_minute: float | None = None
+    ) -> AudioData:
+        return synthesize_text(text, profile, words_per_minute)
