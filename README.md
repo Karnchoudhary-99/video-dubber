@@ -10,7 +10,7 @@ keeping the speaker's voice.
 - [x] Audio extraction + transcription (speech-to-text, word timings)
 - [x] Translation pipeline (source → target language, subtitle-aware)
 - [x] Voice cloning (few-shot speaker embedding, TTS synthesis)
-- [ ] Dub assembly (lip-sync timing, loudness match, mux back to video)
+- [x] Dub assembly (lip-sync timing, loudness match, mux back to video)
 - [ ] CLI + batch mode, quality report (WER, MOS proxy, sync drift)
 - [ ] Self-review checklist, then public
 
@@ -134,11 +134,41 @@ video-dubber synthesize "hello mars" --profile asha.json \
   segment window for dub assembly.
 - Try it without recordings: `python examples/demo_voice.py`.
 
+## Dub assembly
+
+Render a full dubbed track from a translated transcript and a speaker
+profile, then mux it back into the video:
+
+```bash
+# Translated transcript + cloned voice -> dubbed WAV + quality report
+video-dubber dub translated.json --profile asha.json \
+  --original clip.wav --out dubbed.wav \
+  --report-out report.json
+
+# And straight into the video (video stream copied untouched)
+video-dubber dub translated.json --profile asha.json \
+  --out dubbed.wav --video clip.mp4 --mux-out dubbed.mp4
+```
+
+- **Fit**: each segment's speech is time-stretched into its original
+  window (clamped to 0.6–1.6× — beyond that a dub sounds rushed or
+  dragged, and the report flags it instead of producing unintelligible
+  audio).
+- **Loudness**: every segment is RMS-matched to the original recording
+  so the dub does not jump in volume.
+- **Quality report** (`--report-out`, `--report-format json|md`):
+  sync drift (mean/max), fit factors, loudness error in dB, translation
+  coverage, and a verdict — `good`, or `review` when max drift exceeds
+  0.25s, any fit is extreme, or loudness is off by more than 3 dB.
+- Full pipeline in one go: `python examples/demo_dub.py`.
+
 ## Status
 
 Audio extraction + transcription are done (62 tests). Translation is done
-(94 tests). Voice cloning is done (126 tests). Next: dub assembly, then
-the quality report.
+(94 tests). Voice cloning is done (126 tests). Dub assembly is done
+(147 tests). Remaining: CLI + batch mode polish, then the self-review
+checklist and public flip — the project stays private per the 5–7 day
+pace rule (started 2026-11-08).
 
 ## License
 

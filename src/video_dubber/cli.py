@@ -11,12 +11,20 @@ Subcommands (see ``video-dubber <cmd> --help`` for details):
   (dictionary backend, or ``argos-translate`` when installed).
 * ``clone`` — build a speaker profile from reference WAV recordings.
 * ``synthesize`` — render text as audio in a cloned voice (demo synthesis).
+* ``dub`` — render a full dubbed track from a translated transcript and
+  a speaker profile, with a quality report (and optional video mux).
 """
 
 import argparse
 import sys
 
 from video_dubber import __version__
+from video_dubber.assemble import (
+    AssemblyError,
+    build_report,
+    dub_transcript,
+    mux_audio,
+)
 from video_dubber.audio import DEFAULT_SAMPLE_RATE, load_wav, resample, save_wav
 from video_dubber.extract import ExtractionError, extract_audio
 from video_dubber.transcribe import (
@@ -131,6 +139,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_synth.add_argument("--wpm", type=float, help="Speaking rate override.")
     p_synth.add_argument("--semitones", type=float, default=0.0, help="Pitch shift in semitones.")
     p_synth.add_argument("--out", required=True, help="Output WAV path.")
+
+    p_dub = sub.add_parser("dub", help="Render a dubbed track from a translated transcript.")
+    p_dub.add_argument("transcript", help="Translated transcript JSON file.")
+    p_dub.add_argument("--profile", required=True, help="Speaker profile JSON path.")
+    p_dub.add_argument("--original", help="Original audio WAV (for loudness matching).")
+    p_dub.add_argument("--out", required=True, help="Output dubbed WAV path.")
+    p_dub.add_argument("--video", help="Original video to mux the dub into.")
+    p_dub.add_argument("--mux-out", help="Output video path (needs --video).")
+    p_dub.add_argument("--report-out", help="Write the quality report to this file.")
+    p_dub.add_argument(
+        "--report-format",
+        choices=["json", "md"],
+        default="json",
+        help="Quality report format (default json).",
+    )
     return parser
 
 
@@ -272,6 +295,36 @@ def _cmd_synthesize(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_dub(args: argparse.Namespace) -> int:
+    if args.video and not args.mux_out:
+        print("error: --video needs --mux-out", file=sys.stderr)
+        return 2
+    with open(args.transcript, encoding="utf-8") as fh:
+        transcript = Transcript.from_json(fh.read())
+    with open(args.profile, encoding="utf-8") as fh:
+        profile = SpeakerProfile.from_json(fh.read())
+    original = resample(load_wav(args.original), DEFAULT_SAMPLE_RATE) if args.original else None
+    dub_audio, fit_factors, placed = dub_transcript(
+        transcript, ScriptedVoiceCloner(), profile, original
+    )
+    save_wav(args.out, dub_audio)
+    report = build_report(transcript, placed, fit_factors, dub_audio, original)
+    print(f"dubbed {report.segments_dubbed} segments, {dub_audio.duration:.2f}s -> {args.out}")
+    print(
+        f"sync drift mean {report.mean_sync_drift:.3f}s / max {report.max_sync_drift:.3f}s, "
+        f"mean fit {report.mean_fit_factor:.2f}, verdict: {report.verdict}"
+    )
+    if args.report_out:
+        text = report.to_json() if args.report_format == "json" else report.to_markdown()
+        with open(args.report_out, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        print(f"wrote {args.report_out}")
+    if args.video:
+        mux_audio(args.video, args.out, args.mux_out)
+        print(f"muxed dub into {args.mux_out}")
+    return 0
+
+
 def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -293,7 +346,10 @@ def main(argv=None) -> int:
             return _cmd_clone(args)
         if args.command == "synthesize":
             return _cmd_synthesize(args)
+        if args.command == "dub":
+            return _cmd_dub(args)
     except (
+        AssemblyError,
         ExtractionError,
         TranscriptionError,
         TranslationError,

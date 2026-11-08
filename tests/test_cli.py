@@ -379,3 +379,123 @@ def test_cli_synthesize_with_pitch_shift(tmp_path):
         == 0
     )
     assert load_wav(str(out)).duration > 0.1
+
+
+def _write_dub_transcript(path):
+    path.write_text(
+        Transcript(
+            segments=[
+                {
+                    "words": [
+                        {"text": "नमस्ते", "start": 0.0, "end": 0.5},
+                        {"text": "दुनिया", "start": 0.5, "end": 1.0},
+                    ],
+                    "speaker": None,
+                },
+                {
+                    "words": [{"text": "शानदार", "start": 2.0, "end": 2.5}],
+                    "speaker": None,
+                },
+            ],
+            language="hi",
+        ).to_json()
+    )
+
+
+def _write_dub_profile(path):
+    from video_dubber.voice import EMBEDDING_DIM, SpeakerProfile
+
+    path.write_text(
+        SpeakerProfile(
+            name="Dub",
+            embedding=[0.25] * EMBEDDING_DIM,
+            base_pitch_hz=180.0,
+        ).to_json()
+    )
+
+
+@ffmpeg_missing
+def test_cli_dub_renders_track_and_report(tmp_path, capsys):
+    transcript = tmp_path / "hi.json"
+    _write_dub_transcript(transcript)
+    profile = tmp_path / "dub.json"
+    _write_dub_profile(profile)
+    out = tmp_path / "dub.wav"
+    report = tmp_path / "report.json"
+    assert (
+        main(
+            [
+                "dub",
+                str(transcript),
+                "--profile",
+                str(profile),
+                "--out",
+                str(out),
+                "--report-out",
+                str(report),
+                "--report-format",
+                "json",
+            ]
+        )
+        == 0
+    )
+    out_text = capsys.readouterr().out
+    assert "dubbed 2 segments" in out_text
+    assert "verdict: good" in out_text
+    assert load_wav(str(out)).duration == pytest.approx(2.5)
+    data = json.loads(report.read_text(encoding="utf-8"))
+    assert data["segments_dubbed"] == 2
+    assert data["verdict"] == "good"
+
+
+@ffmpeg_missing
+def test_cli_dub_with_video_mux(tmp_path):
+    transcript = tmp_path / "hi.json"
+    _write_dub_transcript(transcript)
+    profile = tmp_path / "dub.json"
+    _write_dub_profile(profile)
+    video = tmp_path / "clip.mp4"
+    _make_test_video(str(video), duration=2.5)
+    out = tmp_path / "dub.wav"
+    muxed = tmp_path / "dubbed.mp4"
+    assert (
+        main(
+            [
+                "dub",
+                str(transcript),
+                "--profile",
+                str(profile),
+                "--out",
+                str(out),
+                "--video",
+                str(video),
+                "--mux-out",
+                str(muxed),
+            ]
+        )
+        == 0
+    )
+    assert muxed.exists() and muxed.stat().st_size > 0
+
+
+def test_cli_dub_video_without_mux_out_fails(tmp_path, capsys):
+    transcript = tmp_path / "hi.json"
+    _write_dub_transcript(transcript)
+    profile = tmp_path / "dub.json"
+    _write_dub_profile(profile)
+    assert (
+        main(
+            [
+                "dub",
+                str(transcript),
+                "--profile",
+                str(profile),
+                "--out",
+                str(tmp_path / "dub.wav"),
+                "--video",
+                str(tmp_path / "clip.mp4"),
+            ]
+        )
+        == 2
+    )
+    assert "--video needs --mux-out" in capsys.readouterr().err
