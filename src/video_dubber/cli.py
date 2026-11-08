@@ -7,6 +7,8 @@ Subcommands (see ``video-dubber <cmd> --help`` for details):
   demo transcript with ``--backend scripted --script words.json``).
 * ``vad`` — list the speech segments an energy VAD finds in a WAV.
 * ``convert`` — re-serialise a transcript JSON file as SRT / WebVTT / JSON.
+* ``translate`` — translate a transcript JSON file to another language
+  (dictionary backend, or ``argos-translate`` when installed).
 """
 
 import argparse
@@ -23,6 +25,13 @@ from video_dubber.transcribe import (
     transcribe_file,
 )
 from video_dubber.transcript import Transcript
+from video_dubber.translate import (
+    ArgosTranslator,
+    DictionaryTranslator,
+    Glossary,
+    TranslationError,
+    translate_transcript,
+)
 from video_dubber.vad import VadConfig, detect_speech, speech_ratio
 
 
@@ -77,6 +86,30 @@ def build_parser() -> argparse.ArgumentParser:
         "--format", choices=["srt", "vtt", "json"], default="srt", help="Output format."
     )
     p_convert.add_argument("--out", help="Write to this file instead of stdout.")
+
+    p_translate = sub.add_parser("translate", help="Translate a transcript JSON file.")
+    p_translate.add_argument("transcript", help="Input transcript JSON file.")
+    p_translate.add_argument("--target", required=True, help="Target language code, e.g. hi, es.")
+    p_translate.add_argument("--source", help="Source language code (default: transcript's).")
+    p_translate.add_argument(
+        "--backend",
+        choices=["dictionary", "argos"],
+        default="dictionary",
+        help="Translation backend (default dictionary).",
+    )
+    p_translate.add_argument("--glossary", help="JSON glossary file of term overrides.")
+    p_translate.add_argument(
+        "--max-chars",
+        type=int,
+        help="Split long translated segments into cues of at most this many chars.",
+    )
+    p_translate.add_argument("--out", help="Write transcript to this file.")
+    p_translate.add_argument(
+        "--format",
+        choices=["json", "srt", "vtt"],
+        default="json",
+        help="Serialisation for --out (default json).",
+    )
     return parser
 
 
@@ -147,6 +180,47 @@ def _cmd_convert(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_translate(args: argparse.Namespace) -> int:
+    with open(args.transcript, encoding="utf-8") as fh:
+        transcript = Transcript.from_json(fh.read())
+    source = args.source or transcript.language or "en"
+    if args.backend == "argos":
+        translator = ArgosTranslator()
+    else:
+        translator = DictionaryTranslator(source=source, target=args.target)
+    glossary = Glossary.from_json_file(args.glossary) if args.glossary else None
+    translated = translate_transcript(
+        transcript,
+        translator,
+        target=args.target,
+        source=source,
+        glossary=glossary,
+        max_chars=args.max_chars,
+    )
+    stats = (
+        f"{translated.word_count} words, {len(translated.segments)} segments, "
+        f"{source} -> {args.target} via {translator.name}"
+    )
+    if isinstance(translator, DictionaryTranslator):
+        stats += f", dictionary coverage {translator.last_coverage:.0%}"
+        if translator.last_unknown:
+            stats += f" (untranslated: {', '.join(translator.last_unknown[:5])})"
+    print(stats)
+    if args.out:
+        text = {
+            "json": translated.to_json(),
+            "srt": translated.to_srt(),
+            "vtt": translated.to_vtt(),
+        }[args.format]
+        with open(args.out, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        print(f"wrote {args.out}")
+    else:
+        for segment in translated.segments:
+            print(f"[{segment.start:7.2f} - {segment.end:7.2f}] {segment.text}")
+    return 0
+
+
 def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -162,7 +236,15 @@ def main(argv=None) -> int:
             return _cmd_vad(args)
         if args.command == "convert":
             return _cmd_convert(args)
-    except (ExtractionError, TranscriptionError, ValueError, OSError) as exc:
+        if args.command == "translate":
+            return _cmd_translate(args)
+    except (
+        ExtractionError,
+        TranscriptionError,
+        TranslationError,
+        ValueError,
+        OSError,
+    ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     parser.error(f"unknown command: {args.command}")

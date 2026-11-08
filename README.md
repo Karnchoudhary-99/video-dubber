@@ -8,7 +8,7 @@ keeping the speaker's voice.
 
 - [x] Project scaffold (README roadmap, license, gitignore)
 - [x] Audio extraction + transcription (speech-to-text, word timings)
-- [ ] Translation pipeline (source → target language, subtitle-aware)
+- [x] Translation pipeline (source → target language, subtitle-aware)
 - [ ] Voice cloning (few-shot speaker embedding, TTS synthesis)
 - [ ] Dub assembly (lip-sync timing, loudness match, mux back to video)
 - [ ] CLI + batch mode, quality report (WER, MOS proxy, sync drift)
@@ -68,10 +68,43 @@ python examples/demo.py
 - **Transcribers** (`transcribe.py`): a `Transcriber` protocol, a Whisper
   CLI adapter (word-timestamped JSON), and the scripted demo double.
 
+## Translation pipeline
+
+Translate a transcript to another language, keeping every segment's
+timing window so the dub still lines up with the video:
+
+```bash
+# English transcript -> Hindi (offline dictionary backend)
+video-dubber translate transcript.json --target hi --out translated.json
+
+# With a glossary pinning team/brand names, and subtitle-sized cues
+video-dubber translate transcript.json --target hi \
+  --glossary glossary.json --max-chars 84 --format srt --out subs.srt
+```
+
+```json
+// glossary.json — terms that must render exactly this way
+{"Mars Rovers": "मार्स रोवर्स", "NASA": "NASA"}
+```
+
+- **Dictionary backend** (`--backend dictionary`, default): built-in
+  en→hi and en→es word/phrase tables. Offline and deterministic; unknown
+  words pass through unchanged and the CLI reports dictionary coverage,
+  so a demo never silently invents text.
+- **Argos backend** (`--backend argos`): shells out to the
+  `argos-translate` CLI (LibreTranslate models) when installed, for real
+  translation quality on any language pair it has a package for.
+- **Timing**: translated words share the source segment's window in
+  proportion to their length, so a translated segment still starts and
+  ends exactly where the source did. `--max-chars` splits long translated
+  segments into subtitle-sized cues at word boundaries, preferring breaks
+  after sentence punctuation.
+- Try it without a model: `python examples/demo_translate.py`.
+
 ## Status
 
-Audio extraction + transcription are done (62 tests). Next: the
-translation pipeline, then voice cloning and dub assembly.
+Audio extraction + transcription are done (62 tests). Translation is done
+(94 tests). Next: voice cloning, then dub assembly.
 
 ## License
 
