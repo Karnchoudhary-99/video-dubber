@@ -29,7 +29,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from video_dubber.audio import AudioData, concat, make_silence
+from video_dubber.audio import AudioData, concat, make_silence, resample
 
 __all__ = [
     "SpeakerProfile",
@@ -396,3 +396,48 @@ class ScriptedVoiceCloner:
         self, text: str, profile: SpeakerProfile, words_per_minute: float | None = None
     ) -> AudioData:
         return synthesize_text(text, profile, words_per_minute)
+
+
+def adjust_prosody(
+    profile: SpeakerProfile,
+    semitones: float = 0.0,
+    words_per_minute: float | None = None,
+) -> SpeakerProfile:
+    """Return a copy of ``profile`` with shifted pitch and/or speaking rate.
+
+    Pitch shifts by ``semitones`` (``+12`` = one octave up, via
+    ``2 ** (semitones / 12)``); rate replaces the profile's wpm when
+    given. The embedding is untouched — prosody is performance, not
+    identity — so a shifted profile still matches the original speaker.
+    """
+    if words_per_minute is not None and words_per_minute <= 0:
+        raise VoiceCloneError(
+            f"words_per_minute must be positive, got {words_per_minute}"
+        )
+    return SpeakerProfile(
+        name=profile.name,
+        embedding=list(profile.embedding),
+        base_pitch_hz=profile.base_pitch_hz * (2.0 ** (semitones / 12.0)),
+        speaking_rate_wpm=words_per_minute or profile.speaking_rate_wpm,
+        reference_files=list(profile.reference_files),
+    )
+
+
+def time_stretch(audio: AudioData, factor: float) -> AudioData:
+    """Change duration by ``factor`` without changing the sample rate.
+
+    ``factor > 1`` makes the audio longer (slower); ``factor < 1`` makes
+    it shorter. Linear-interpolation resampling: quality is adequate for
+    the demo double's tones, and the function is what dub assembly uses
+    to fit synthesised speech into its segment window. Raises
+    :class:`VoiceCloneError` on a non-positive factor.
+    """
+    if factor <= 0:
+        raise VoiceCloneError(f"time-stretch factor must be positive, got {factor}")
+    if not audio.samples or factor == 1.0:
+        return AudioData(list(audio.samples), audio.sample_rate)
+    stretched = AudioData(list(audio.samples), audio.sample_rate)
+    # Resample to a higher rate then relabel: more samples at the same
+    # rate means a longer clip at the same pitch contour shape.
+    resampled = resample(stretched, max(1, round(audio.sample_rate * factor)))
+    return AudioData(resampled.samples, audio.sample_rate)
