@@ -13,6 +13,7 @@ Subcommands (see ``video-dubber <cmd> --help`` for details):
 * ``synthesize`` — render text as audio in a cloned voice (demo synthesis).
 * ``dub`` — render a full dubbed track from a translated transcript and
   a speaker profile, with a quality report (and optional video mux).
+* ``batch`` — dub many videos/transcripts from one manifest JSON file.
 """
 
 import argparse
@@ -26,6 +27,12 @@ from video_dubber.assemble import (
     mux_audio,
 )
 from video_dubber.audio import DEFAULT_SAMPLE_RATE, load_wav, resample, save_wav
+from video_dubber.batch import (
+    BatchError,
+    BatchManifest,
+    run_batch,
+    summarize,
+)
 from video_dubber.extract import ExtractionError, extract_audio
 from video_dubber.transcribe import (
     ScriptedTranscriber,
@@ -158,6 +165,20 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["json", "md"],
         default="json",
         help="Quality report format (default json).",
+    )
+
+    p_batch = sub.add_parser("batch", help="Dub many jobs from a manifest JSON file.")
+    p_batch.add_argument("manifest", help="Manifest JSON file (see README for the format).")
+    p_batch.add_argument("--out-dir", required=True, help="Output directory; one subdir per job.")
+    p_batch.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-run jobs whose dubbed WAV already exists.",
+    )
+    p_batch.add_argument(
+        "--stop-on-error",
+        action="store_true",
+        help="Stop the batch after the first failed job.",
     )
     return parser
 
@@ -339,6 +360,28 @@ def _cmd_dub(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_batch(args: argparse.Namespace) -> int:
+    manifest = BatchManifest.from_json_file(args.manifest)
+    results = run_batch(manifest, args.out_dir, force=args.force, stop_on_error=args.stop_on_error)
+    for result in results:
+        if result.status == "ok":
+            print(
+                f"ok {result.name} (verdict {result.verdict}, "
+                f"MOS proxy {result.mos_proxy}, {result.duration_s:.1f}s)"
+            )
+        elif result.status == "skipped":
+            print(f"skipped {result.name} (dubbed WAV already exists, use --force to redo)")
+        else:
+            print(f"failed {result.name}: {result.error}", file=sys.stderr)
+    summary = summarize(results, args.out_dir)
+    print(
+        f"batch done: {summary.succeeded} ok, {summary.failed} failed, "
+        f"{summary.skipped} skipped out of {summary.total}"
+    )
+    print(f"reports: {args.out_dir}/batch-report.json, {args.out_dir}/batch-report.md")
+    return 1 if summary.failed else 0
+
+
 def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -362,8 +405,11 @@ def main(argv=None) -> int:
             return _cmd_synthesize(args)
         if args.command == "dub":
             return _cmd_dub(args)
+        if args.command == "batch":
+            return _cmd_batch(args)
     except (
         AssemblyError,
+        BatchError,
         ExtractionError,
         TranscriptionError,
         TranslationError,
