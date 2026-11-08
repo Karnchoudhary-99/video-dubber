@@ -355,7 +355,7 @@ def synthesize_text(
     predictable from the text, which is what dub assembly relies on to
     stretch it into the segment window. Empty text returns silence.
     """
-    wpm = words_per_minute or profile.speaking_rate_wpm
+    wpm = profile.speaking_rate_wpm if words_per_minute is None else words_per_minute
     if wpm <= 0:
         raise VoiceCloneError(f"words_per_minute must be positive, got {wpm}")
     words = text.split()
