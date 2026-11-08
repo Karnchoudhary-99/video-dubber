@@ -9,13 +9,21 @@ Subcommands (see ``video-dubber <cmd> --help`` for details):
 * ``convert`` — re-serialise a transcript JSON file as SRT / WebVTT / JSON.
 * ``translate`` — translate a transcript JSON file to another language
   (dictionary backend, or ``argos-translate`` when installed).
+* ``clone`` — build a speaker profile from reference WAV recordings.
+* ``synthesize`` — render text as audio in a cloned voice (demo synthesis).
 """
 
 import argparse
 import sys
 
 from video_dubber import __version__
-from video_dubber.audio import DEFAULT_SAMPLE_RATE, load_wav, resample
+from video_dubber.audio import DEFAULT_SAMPLE_RATE, load_wav, resample, save_wav
+from video_dubber.voice import (
+    ScriptedVoiceCloner,
+    SpeakerProfile,
+    VoiceCloneError,
+    adjust_prosody,
+)
 from video_dubber.extract import ExtractionError, extract_audio
 from video_dubber.transcribe import (
     ScriptedTranscriber,
@@ -110,6 +118,19 @@ def build_parser() -> argparse.ArgumentParser:
         default="json",
         help="Serialisation for --out (default json).",
     )
+
+    p_clone = sub.add_parser("clone", help="Build a speaker profile from reference WAVs.")
+    p_clone.add_argument("references", nargs="+", help="Reference WAV recordings.")
+    p_clone.add_argument("--name", required=True, help="Speaker name for the profile.")
+    p_clone.add_argument("--wpm", type=float, help="Speaking rate if known (default 150).")
+    p_clone.add_argument("--out", required=True, help="Output profile JSON path.")
+
+    p_synth = sub.add_parser("synthesize", help="Render text in a cloned voice.")
+    p_synth.add_argument("text", help="Text to speak.")
+    p_synth.add_argument("--profile", required=True, help="Speaker profile JSON path.")
+    p_synth.add_argument("--wpm", type=float, help="Speaking rate override.")
+    p_synth.add_argument("--semitones", type=float, default=0.0, help="Pitch shift in semitones.")
+    p_synth.add_argument("--out", required=True, help="Output WAV path.")
     return parser
 
 
@@ -221,6 +242,38 @@ def _cmd_translate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_clone(args: argparse.Namespace) -> int:
+    cloner = ScriptedVoiceCloner()
+    audios = [resample(load_wav(path), DEFAULT_SAMPLE_RATE) for path in args.references]
+    profile = cloner.clone(args.name, audios, reference_files=list(args.references))
+    if args.wpm:
+        profile = adjust_prosody(profile, words_per_minute=args.wpm)
+    with open(args.out, "w", encoding="utf-8") as fh:
+        fh.write(profile.to_json())
+    print(
+        f"cloned {profile.name}: base pitch {profile.base_pitch_hz:.0f} Hz, "
+        f"{profile.speaking_rate_wpm:.0f} wpm, {len(args.references)} reference(s)"
+    )
+    print(f"wrote {args.out}")
+    return 0
+
+
+def _cmd_synthesize(args: argparse.Namespace) -> int:
+    with open(args.profile, encoding="utf-8") as fh:
+        profile = SpeakerProfile.from_json(fh.read())
+    if args.semitones or args.wpm:
+        profile = adjust_prosody(
+            profile, semitones=args.semitones, words_per_minute=args.wpm
+        )
+    audio = ScriptedVoiceCloner().synthesize(args.text, profile)
+    save_wav(args.out, audio)
+    print(
+        f"synthesized {len(args.text.split())} words in {profile.name}'s voice: "
+        f"{audio.duration:.2f}s -> {args.out}"
+    )
+    return 0
+
+
 def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -238,10 +291,15 @@ def main(argv=None) -> int:
             return _cmd_convert(args)
         if args.command == "translate":
             return _cmd_translate(args)
+        if args.command == "clone":
+            return _cmd_clone(args)
+        if args.command == "synthesize":
+            return _cmd_synthesize(args)
     except (
         ExtractionError,
         TranscriptionError,
         TranslationError,
+        VoiceCloneError,
         ValueError,
         OSError,
     ) as exc:
