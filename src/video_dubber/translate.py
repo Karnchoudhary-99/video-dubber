@@ -324,6 +324,7 @@ def translate_transcript(
     target: str,
     source: str | None = None,
     glossary: Glossary | None = None,
+    max_chars: int | None = None,
 ) -> Transcript:
     """Translate a whole transcript, preserving segment timing windows.
 
@@ -332,8 +333,10 @@ def translate_transcript(
     proportion to their character length (longer words get more time).
     Speaker labels survive; the result's ``language`` is the target and
     ``source`` records the backend that produced it. Empty segments stay
-    empty. Raises :class:`TranslationError` if the source language is
-    unknown and no ``source`` was given.
+    empty. With ``max_chars`` set, long translated segments are split into
+    subtitle-sized cues via :func:`chunk_segment`. Raises
+    :class:`TranslationError` if the source language is unknown and no
+    ``source`` was given.
     """
     src = source or transcript.language
     if not src:
@@ -345,7 +348,11 @@ def translate_transcript(
     for segment in transcript.segments:
         text = translate_text(segment.text, translator, src, target, glossary)
         words = _retime(segment, text.split(), segment.mean_confidence)
-        segments.append(Segment(words=words, speaker=segment.speaker))
+        translated = Segment(words=words, speaker=segment.speaker)
+        if max_chars is not None:
+            segments.extend(chunk_segment(translated, max_chars))
+        else:
+            segments.append(translated)
     return Transcript(segments=segments, language=target, source=translator.name)
 
 
@@ -367,4 +374,44 @@ def _retime(segment: Segment, words: list[str], confidence: float) -> list[Word]
         end = segment.end if index == len(words) - 1 else cursor + share
         out.append(Word(text=word, start=cursor, end=end, confidence=confidence))
         cursor = end
+    return out
+
+
+def chunk_segment(segment: Segment, max_chars: int = 84) -> list[Segment]:
+    """Split a segment into subtitle-sized cues (<= ``max_chars`` chars).
+
+    Dubbed text is often longer than the source (Hindi runs ~15% longer
+    than English); a single long cue is unreadable on screen, so cues are
+    cut at word boundaries, preferring breaks after sentence punctuation,
+    and each chunk keeps a proportional slice of the original timing
+    window. A segment that already fits is returned unchanged. Raises
+    :class:`TranslationError` on a non-positive ``max_chars``.
+    """
+    if max_chars <= 0:
+        raise TranslationError(f"max_chars must be positive, got {max_chars}")
+    if not segment.words or len(segment.text) <= max_chars:
+        return [segment]
+    words = segment.words
+    chunks: list[list[Word]] = []
+    current: list[Word] = []
+    current_len = 0
+    for word in words:
+        add = len(word.text) + (1 if current else 0)
+        if current and current_len + add > max_chars:
+            chunks.append(current)
+            current = []
+            current_len = 0
+        current.append(word)
+        current_len += len(word.text) + (1 if len(current) > 1 else 0)
+        # Prefer a break right after sentence punctuation when the cue is
+        # already reasonably full (avoids mid-sentence cuts).
+        if word.text.endswith((".", "!", "?", "।")) and current_len >= max_chars // 2:
+            chunks.append(current)
+            current = []
+            current_len = 0
+    if current:
+        chunks.append(current)
+    out: list[Segment] = []
+    for chunk in chunks:
+        out.append(Segment(words=list(chunk), speaker=segment.speaker))
     return out
