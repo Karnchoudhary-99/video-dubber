@@ -76,7 +76,11 @@ def loudness_match(audio: AudioData, reference: AudioData) -> AudioData:
     """
     if not audio.samples:
         return AudioData([], audio.sample_rate)
-    ref_rms = math.sqrt(sum(s * s for s in reference.samples) / len(reference.samples)) if reference.samples else 0.0
+    ref_rms = (
+        math.sqrt(sum(s * s for s in reference.samples) / len(reference.samples))
+        if reference.samples
+        else 0.0
+    )
     if ref_rms <= 0.0:
         return AudioData(list(audio.samples), audio.sample_rate)
     rms = math.sqrt(sum(s * s for s in audio.samples) / len(audio.samples))
@@ -188,13 +192,12 @@ def mux_audio(video_path: str, audio_path: str, out_path: str) -> str:
     except ExtractionError as exc:
         raise AssemblyError(str(exc)) from exc
     if result.returncode != 0:
-        raise AssemblyError(
-            f"ffmpeg mux failed for {video_path}: {result.stderr.strip()[:300]}"
-        )
+        raise AssemblyError(f"ffmpeg mux failed for {video_path}: {result.stderr.strip()[:300]}")
     return out_path
 
 
 # --- Quality report -----------------------------------------------------------
+
 
 @dataclass
 class DubReport:
@@ -270,8 +273,7 @@ def build_report(
     """
     timed = [s for s in transcript.segments if s.words]
     drifts = [
-        abs((start + duration) - segment.end)
-        for segment, (start, duration) in zip(timed, placed)
+        abs((start + duration) - segment.end) for segment, (start, duration) in zip(timed, placed)
     ]
     mean_drift = sum(drifts) / len(drifts) if drifts else 0.0
     max_drift = max(drifts, default=0.0)

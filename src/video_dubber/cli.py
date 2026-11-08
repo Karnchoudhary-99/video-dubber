@@ -303,17 +303,13 @@ def _cmd_dub(args: argparse.Namespace) -> int:
         transcript = Transcript.from_json(fh.read())
     with open(args.profile, encoding="utf-8") as fh:
         profile = SpeakerProfile.from_json(fh.read())
-    original = (
-        resample(load_wav(args.original), DEFAULT_SAMPLE_RATE) if args.original else None
-    )
+    original = resample(load_wav(args.original), DEFAULT_SAMPLE_RATE) if args.original else None
     dub_audio, fit_factors, placed = dub_transcript(
         transcript, ScriptedVoiceCloner(), profile, original
     )
     save_wav(args.out, dub_audio)
     report = build_report(transcript, placed, fit_factors, dub_audio, original)
-    print(
-        f"dubbed {report.segments_dubbed} segments, {dub_audio.duration:.2f}s -> {args.out}"
-    )
+    print(f"dubbed {report.segments_dubbed} segments, {dub_audio.duration:.2f}s -> {args.out}")
     print(
         f"sync drift mean {report.mean_sync_drift:.3f}s / max {report.max_sync_drift:.3f}s, "
         f"mean fit {report.mean_fit_factor:.2f}, verdict: {report.verdict}"

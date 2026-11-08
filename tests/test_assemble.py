@@ -6,11 +6,11 @@ import pytest
 
 from video_dubber.assemble import (
     AssemblyError,
+    assemble_dub,
     build_report,
     dub_transcript,
     fit_to_window,
     loudness_match,
-    assemble_dub,
 )
 from video_dubber.audio import AudioData, make_silence, make_sine
 from video_dubber.transcript import Segment, Transcript, Word
@@ -25,9 +25,7 @@ def _words(texts, start=0.0, step=0.5):
 
 
 def _profile() -> SpeakerProfile:
-    return SpeakerProfile(
-        name="Test", embedding=[0.25] * EMBEDDING_DIM, base_pitch_hz=180.0
-    )
+    return SpeakerProfile(name="Test", embedding=[0.25] * EMBEDDING_DIM, base_pitch_hz=180.0)
 
 
 class TestFitToWindow:
@@ -86,7 +84,13 @@ class TestAssembleDub:
         assert max(abs(s) for s in second) > 0.0  # second clip audible from 1.0s
 
     def test_overlapping_clips_mix_without_clipping(self):
-        bed = assemble_dub([(0.0, make_sine(440.0, 0.5, amplitude=0.9)), (0.0, make_sine(440.0, 0.5, amplitude=0.9))], 1.0)
+        bed = assemble_dub(
+            [
+                (0.0, make_sine(440.0, 0.5, amplitude=0.9)),
+                (0.0, make_sine(440.0, 0.5, amplitude=0.9)),
+            ],
+            1.0,
+        )
         assert bed.peak <= 1.0
 
     def test_negative_start_raises(self):
@@ -128,16 +132,14 @@ class TestDubTranscript:
             segments=[Segment(words=[]), Segment(words=_words(["hello"], 1.0))],
             language="hi",
         )
-        dub, factors, placed = dub_transcript(transcript, ScriptedVoiceCloner(), _profile())
+        _dub, factors, placed = dub_transcript(transcript, ScriptedVoiceCloner(), _profile())
         assert len(factors) == 1
         assert len(placed) == 1
 
 
 class TestBuildReport:
     def test_good_verdict_for_clean_dub(self):
-        transcript = Transcript(
-            segments=[Segment(words=_words(["hello"], 0.0))], language="hi"
-        )
+        transcript = Transcript(segments=[Segment(words=_words(["hello"], 0.0))], language="hi")
         dub, factors, placed = dub_transcript(transcript, ScriptedVoiceCloner(), _profile())
         report = build_report(transcript, placed, factors, dub)
         assert report.verdict == "good"
@@ -147,9 +149,7 @@ class TestBuildReport:
         assert '"verdict": "good"' in report.to_json()
 
     def test_review_verdict_for_extreme_fit(self):
-        transcript = Transcript(
-            segments=[Segment(words=_words(["hello"], 0.0))], language="hi"
-        )
+        transcript = Transcript(segments=[Segment(words=_words(["hello"], 0.0))], language="hi")
         # A fit factor of 1.6 is outside the 0.8-1.25 band.
         dub = make_sine(220.0, 0.5)
         report = build_report(transcript, [(0.0, 0.5)], [1.6], dub)
@@ -157,15 +157,15 @@ class TestBuildReport:
         assert report.extreme_fits == 1
 
     def test_loudness_error_measured_against_original(self):
-        transcript = Transcript(
-            segments=[Segment(words=_words(["hello"], 0.0))], language="hi"
-        )
+        transcript = Transcript(segments=[Segment(words=_words(["hello"], 0.0))], language="hi")
         dub, factors, placed = dub_transcript(
             transcript,
             ScriptedVoiceCloner(),
             _profile(),
             original=make_sine(220.0, 1.0, amplitude=0.1),
         )
-        report = build_report(transcript, placed, factors, dub, make_sine(220.0, 1.0, amplitude=0.1))
+        report = build_report(
+            transcript, placed, factors, dub, make_sine(220.0, 1.0, amplitude=0.1)
+        )
         assert report.loudness_error_db is not None
         assert abs(report.loudness_error_db) < 3.0
