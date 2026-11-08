@@ -9,7 +9,7 @@ keeping the speaker's voice.
 - [x] Project scaffold (README roadmap, license, gitignore)
 - [x] Audio extraction + transcription (speech-to-text, word timings)
 - [x] Translation pipeline (source → target language, subtitle-aware)
-- [ ] Voice cloning (few-shot speaker embedding, TTS synthesis)
+- [x] Voice cloning (few-shot speaker embedding, TTS synthesis)
 - [ ] Dub assembly (lip-sync timing, loudness match, mux back to video)
 - [ ] CLI + batch mode, quality report (WER, MOS proxy, sync drift)
 - [ ] Self-review checklist, then public
@@ -101,10 +101,44 @@ video-dubber translate transcript.json --target hi \
   after sentence punctuation.
 - Try it without a model: `python examples/demo_translate.py`.
 
+## Voice cloning
+
+Clone a speaker from reference recordings, then render text in that
+voice:
+
+```bash
+# Build a speaker profile from 1+ reference WAVs (16 kHz mono is ideal)
+video-dubber clone ref1.wav ref2.wav --name Asha --out asha.json
+
+# Render text in Asha's voice (demo synthesis)
+video-dubber synthesize "hello mars, welcome to the final" \
+  --profile asha.json --out hello.wav
+
+# Same voice, one octave up / faster delivery
+video-dubber synthesize "hello mars" --profile asha.json \
+  --semitones 12 --wpm 180 --out hello-fast.wav
+```
+
+- **Embedding** (`voice.py`): a real, deterministic 16-dim embedding
+  from stdlib spectral features (band energies, zero-crossing rate,
+  spectral centroid, autocorrelation pitch). It tells speakers apart —
+  same-voice similarity 1.000 vs 0.803 across voices in the demo — but it
+  is a timbre fingerprint, not a neural voice encoder.
+- **Synthesis** is a labelled demo double: formant-shaped harmonic tones
+  at the speaker's pitch and rate, timed per word. It sounds like a
+  voice, not like the person; a real TTS backend (Coqui XTTS /
+  OpenVoice) slots in behind the same `VoiceCloner` protocol.
+- **Prosody**: `--semitones` shifts pitch, `--wpm` the speaking rate;
+  the embedding never changes, so a shifted profile still matches the
+  original speaker. `time_stretch` fits synthesised speech into a
+  segment window for dub assembly.
+- Try it without recordings: `python examples/demo_voice.py`.
+
 ## Status
 
 Audio extraction + transcription are done (62 tests). Translation is done
-(94 tests). Next: voice cloning, then dub assembly.
+(94 tests). Voice cloning is done (126 tests). Next: dub assembly, then
+the quality report.
 
 ## License
 

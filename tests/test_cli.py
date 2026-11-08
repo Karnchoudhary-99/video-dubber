@@ -3,7 +3,7 @@ import subprocess
 
 import pytest
 
-from video_dubber.audio import concat, make_silence, make_sine, save_wav
+from video_dubber.audio import concat, load_wav, make_silence, make_sine, save_wav
 from video_dubber.cli import main
 from video_dubber.extract import ffmpeg_available
 from video_dubber.transcript import Transcript
@@ -307,3 +307,75 @@ def test_cli_translate_defaults_source_to_english(tmp_path):
     out = tmp_path / "hi.json"
     assert main(["translate", str(transcript), "--target", "hi", "--out", str(out)]) == 0
     assert Transcript.from_json(out.read_text(encoding="utf-8")).segments[0].text == "नमस्ते"
+
+
+def _make_reference_wav(path, freq=220.0):
+    save_wav(str(path), make_sine(freq, 0.5))
+
+
+def test_cli_clone_and_synthesize(tmp_path, capsys):
+    from video_dubber.voice import SpeakerProfile
+
+    ref = tmp_path / "ref.wav"
+    _make_reference_wav(ref)
+    profile_path = tmp_path / "asha.json"
+    assert main(["clone", str(ref), "--name", "Asha", "--out", str(profile_path)]) == 0
+    assert "cloned Asha" in capsys.readouterr().out
+    profile = SpeakerProfile.from_json(profile_path.read_text(encoding="utf-8"))
+    assert profile.name == "Asha"
+    assert profile.base_pitch_hz == pytest.approx(220.0, rel=0.1)
+
+    out_wav = tmp_path / "hello.wav"
+    assert (
+        main(
+            [
+                "synthesize",
+                "hello world",
+                "--profile",
+                str(profile_path),
+                "--out",
+                str(out_wav),
+            ]
+        )
+        == 0
+    )
+    assert "synthesized 2 words" in capsys.readouterr().out
+    assert load_wav(str(out_wav)).duration > 0.2
+
+
+def test_cli_clone_silent_reference_fails(tmp_path, capsys):
+    ref = tmp_path / "silent.wav"
+    save_wav(str(ref), make_silence(0.5))
+    profile_path = tmp_path / "nobody.json"
+    assert main(["clone", str(ref), "--name", "Nobody", "--out", str(profile_path)]) == 1
+    assert "silent" in capsys.readouterr().err
+
+
+def test_cli_synthesize_with_pitch_shift(tmp_path):
+    from video_dubber.voice import EMBEDDING_DIM, SpeakerProfile
+
+    profile_path = tmp_path / "low.json"
+    profile_path.write_text(
+        SpeakerProfile(
+            name="Low",
+            embedding=[0.25] * EMBEDDING_DIM,
+            base_pitch_hz=110.0,
+        ).to_json()
+    )
+    out = tmp_path / "shifted.wav"
+    assert (
+        main(
+            [
+                "synthesize",
+                "hello",
+                "--profile",
+                str(profile_path),
+                "--semitones",
+                "12",
+                "--out",
+                str(out),
+            ]
+        )
+        == 0
+    )
+    assert load_wav(str(out)).duration > 0.1
