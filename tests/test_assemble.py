@@ -156,6 +156,40 @@ class TestBuildReport:
         assert report.verdict == "review"
         assert report.extreme_fits == 1
 
+    def test_mos_proxy_is_high_for_clean_dub(self):
+        transcript = Transcript(segments=[Segment(words=_words(["hello"], 0.0))], language="hi")
+        dub, factors, placed = dub_transcript(transcript, ScriptedVoiceCloner(), _profile())
+        report = build_report(transcript, placed, factors, dub)
+        # Not exactly 5.0: the demo synthesis quantises word timings, so a
+        # real dub always carries a few dozen ms of drift.
+        assert report.mos_proxy >= 4.5
+        assert report.word_error_rate is None
+        assert '"mos_proxy": 5.0' in report.to_json()
+        assert "MOS proxy" in report.to_markdown()
+
+    def test_wer_zero_when_dub_matches_reference(self):
+        transcript = Transcript(
+            segments=[Segment(words=_words(["hello", "mars"], 0.0))], language="hi"
+        )
+        dub, factors, placed = dub_transcript(transcript, ScriptedVoiceCloner(), _profile())
+        report = build_report(transcript, placed, factors, dub, reference_transcript=transcript)
+        assert report.word_error_rate == 0.0
+        assert report.verdict == "good"
+        assert "Word error rate vs reference: 0.000" in report.to_markdown()
+
+    def test_wer_flags_wrong_words_and_drops_mos(self):
+        transcript = Transcript(
+            segments=[Segment(words=_words(["hello", "mars"], 0.0))], language="hi"
+        )
+        reference = Transcript(
+            segments=[Segment(words=_words(["hello", "venus"], 0.0))], language="hi"
+        )
+        dub, factors, placed = dub_transcript(transcript, ScriptedVoiceCloner(), _profile())
+        report = build_report(transcript, placed, factors, dub, reference_transcript=reference)
+        assert report.word_error_rate == pytest.approx(0.5)
+        assert report.verdict == "review"  # WER 0.5 > 0.25 threshold
+        assert report.mos_proxy < 5.0
+
     def test_loudness_error_measured_against_original(self):
         transcript = Transcript(segments=[Segment(words=_words(["hello"], 0.0))], language="hi")
         dub, factors, placed = dub_transcript(

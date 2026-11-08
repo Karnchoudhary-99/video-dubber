@@ -149,6 +149,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_dub.add_argument("--mux-out", help="Output video path (needs --video).")
     p_dub.add_argument("--report-out", help="Write the quality report to this file.")
     p_dub.add_argument(
+        "--reference",
+        help="Same-language ground-truth transcript (JSON) of what the dub should "
+        "say; enables WER in the quality report.",
+    )
+    p_dub.add_argument(
         "--report-format",
         choices=["json", "md"],
         default="json",
@@ -304,16 +309,25 @@ def _cmd_dub(args: argparse.Namespace) -> int:
     with open(args.profile, encoding="utf-8") as fh:
         profile = SpeakerProfile.from_json(fh.read())
     original = resample(load_wav(args.original), DEFAULT_SAMPLE_RATE) if args.original else None
+    reference = None
+    if args.reference:
+        with open(args.reference, encoding="utf-8") as fh:
+            reference = Transcript.from_json(fh.read())
     dub_audio, fit_factors, placed = dub_transcript(
         transcript, ScriptedVoiceCloner(), profile, original
     )
     save_wav(args.out, dub_audio)
-    report = build_report(transcript, placed, fit_factors, dub_audio, original)
+    report = build_report(
+        transcript, placed, fit_factors, dub_audio, original, reference_transcript=reference
+    )
     print(f"dubbed {report.segments_dubbed} segments, {dub_audio.duration:.2f}s -> {args.out}")
     print(
         f"sync drift mean {report.mean_sync_drift:.3f}s / max {report.max_sync_drift:.3f}s, "
-        f"mean fit {report.mean_fit_factor:.2f}, verdict: {report.verdict}"
+        f"mean fit {report.mean_fit_factor:.2f}, MOS proxy {report.mos_proxy:.2f}, "
+        f"verdict: {report.verdict}"
     )
+    if report.word_error_rate is not None:
+        print(f"word error rate vs reference: {report.word_error_rate:.3f}")
     if args.report_out:
         text = report.to_json() if args.report_format == "json" else report.to_markdown()
         with open(args.report_out, "w", encoding="utf-8") as fh:
