@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from video_dubber.transcript import Segment, Transcript, Word, from_words
+from video_dubber.transcript import Segment, Transcript, Word
 from video_dubber.translate import (
     ArgosTranslator,
     DictionaryTranslator,
@@ -34,6 +34,7 @@ def _transcript():
 
 
 # --- DictionaryTranslator ---------------------------------------------------
+
 
 class TestDictionaryTranslator:
     def test_word_translation_en_hi(self):
@@ -78,13 +79,12 @@ class TestDictionaryTranslator:
             t.translate("hello", "en", "fr")
 
     def test_custom_dictionary(self):
-        t = DictionaryTranslator(
-            source="en", target="xx", dictionary={"hello": "xyzzy"}
-        )
+        t = DictionaryTranslator(source="en", target="xx", dictionary={"hello": "xyzzy"})
         assert t.translate("hello", "en", "xx") == "xyzzy"
 
 
 # --- Glossary ----------------------------------------------------------------
+
 
 class TestGlossary:
     def test_term_override_applied_before_dictionary(self):
@@ -120,6 +120,7 @@ class TestGlossary:
 
 # --- translate_transcript: timing preservation -------------------------------
 
+
 class TestTranslateTranscript:
     def test_segments_keep_windows_and_speakers(self):
         out = translate_transcript(
@@ -152,9 +153,7 @@ class TestTranslateTranscript:
         tr = Transcript(segments=[seg], language="en")
         out = translate_transcript(
             tr,
-            DictionaryTranslator(
-                source="en", target="es", dictionary={"hi": "hola amigo largo"}
-            ),
+            DictionaryTranslator(source="en", target="es", dictionary={"hi": "hola amigo largo"}),
             "es",
         )
         durations = [w.end - w.start for w in out.segments[0].words]
@@ -162,7 +161,9 @@ class TestTranslateTranscript:
         assert sum(durations) == pytest.approx(1.0)
 
     def test_empty_segment_stays_empty(self):
-        tr = Transcript(segments=[Segment(words=[]), Segment(words=_words(["hello"]))], language="en")
+        tr = Transcript(
+            segments=[Segment(words=[]), Segment(words=_words(["hello"]))], language="en"
+        )
         out = translate_transcript(tr, DictionaryTranslator(source="en", target="hi"), "hi")
         assert out.segments[0].words == []
         assert out.segments[1].text == "नमस्ते"
@@ -189,7 +190,9 @@ class TestTranslateTranscript:
 
     def test_max_chars_chunks_long_segments(self):
         out = translate_transcript(
-            _transcript(), DictionaryTranslator(source="en", target="hi"), "hi",
+            _transcript(),
+            DictionaryTranslator(source="en", target="hi"),
+            "hi",
             max_chars=10,
         )
         assert len(out.segments) >= 2
@@ -198,6 +201,7 @@ class TestTranslateTranscript:
 
 
 # --- chunk_segment -----------------------------------------------------------
+
 
 class TestChunkSegment:
     def test_short_segment_unchanged(self):
@@ -229,6 +233,7 @@ class TestChunkSegment:
 
 
 # --- ArgosTranslator ---------------------------------------------------------
+
 
 class TestArgosTranslator:
     def test_missing_cli_raises_clear_error(self, monkeypatch):

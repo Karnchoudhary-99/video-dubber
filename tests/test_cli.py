@@ -214,3 +214,96 @@ def test_cli_convert_bad_json(tmp_path, capsys):
 def test_cli_unknown_command(capsys):
     with pytest.raises(SystemExit):
         main(["frobnicate"])
+
+
+def _write_transcript(path, language="en"):
+    path.write_text(
+        Transcript(
+            segments=[
+                {
+                    "words": [
+                        {"text": "Hello", "start": 0.0, "end": 0.5},
+                        {"text": "world", "start": 0.5, "end": 1.0},
+                    ],
+                    "speaker": None,
+                }
+            ],
+            language=language,
+        ).to_json()
+    )
+
+
+def test_cli_translate_to_hindi_json(tmp_path, capsys):
+    transcript = tmp_path / "en.json"
+    _write_transcript(transcript)
+    out = tmp_path / "hi.json"
+    assert main(["translate", str(transcript), "--target", "hi", "--out", str(out)]) == 0
+    assert "coverage" in capsys.readouterr().out
+    translated = Transcript.from_json(out.read_text(encoding="utf-8"))
+    assert translated.language == "hi"
+    assert translated.segments[0].text == "नमस्ते दुनिया"
+    assert translated.segments[0].start == 0.0
+    assert translated.segments[0].end == 1.0
+
+
+def test_cli_translate_srt_with_chunking(tmp_path):
+    transcript = tmp_path / "en.json"
+    _write_transcript(transcript)
+    out = tmp_path / "hi.srt"
+    assert (
+        main(
+            [
+                "translate",
+                str(transcript),
+                "--target",
+                "hi",
+                "--format",
+                "srt",
+                "--max-chars",
+                "8",
+                "--out",
+                str(out),
+            ]
+        )
+        == 0
+    )
+    cues = out.read_text(encoding="utf-8").strip().split("\n\n")
+    assert len(cues) == 2
+    assert all(len(cue.split("\n", 2)[2].strip()) <= 8 for cue in cues)
+
+
+def test_cli_translate_with_glossary(tmp_path):
+    transcript = tmp_path / "en.json"
+    _write_transcript(transcript)
+    glossary = tmp_path / "glossary.json"
+    glossary.write_text(json.dumps({"world": "दुनिया-जी"}), encoding="utf-8")
+    out = tmp_path / "hi.json"
+    assert (
+        main(
+            [
+                "translate",
+                str(transcript),
+                "--target",
+                "hi",
+                "--glossary",
+                str(glossary),
+                "--out",
+                str(out),
+            ]
+        )
+        == 0
+    )
+    assert Transcript.from_json(out.read_text(encoding="utf-8")).segments[0].text == (
+        "नमस्ते दुनिया-जी"
+    )
+
+
+def test_cli_translate_defaults_source_to_english(tmp_path):
+    # A transcript with no language set translates as English by default.
+    transcript = tmp_path / "nolanguage.json"
+    transcript.write_text(
+        Transcript(segments=[{"words": [{"text": "Hello", "start": 0.0, "end": 0.3}]}]).to_json()
+    )
+    out = tmp_path / "hi.json"
+    assert main(["translate", str(transcript), "--target", "hi", "--out", str(out)]) == 0
+    assert Transcript.from_json(out.read_text(encoding="utf-8")).segments[0].text == "नमस्ते"

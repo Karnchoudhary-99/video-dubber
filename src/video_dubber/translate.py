@@ -287,6 +287,7 @@ class ArgosTranslator:
                 capture_output=True,
                 text=True,
                 timeout=self.timeout,
+                check=False,
             )
         except FileNotFoundError as exc:
             raise TranslationError(
@@ -295,13 +296,10 @@ class ArgosTranslator:
                 "or use --backend dictionary"
             ) from exc
         except subprocess.TimeoutExpired as exc:
-            raise TranslationError(
-                f"argos-translate timed out after {self.timeout}s"
-            ) from exc
+            raise TranslationError(f"argos-translate timed out after {self.timeout}s") from exc
         if result.returncode != 0:
             raise TranslationError(
-                f"argos-translate failed (exit {result.returncode}): "
-                f"{result.stderr.strip()[:300]}"
+                f"argos-translate failed (exit {result.returncode}): {result.stderr.strip()[:300]}"
             )
         translated = result.stdout.strip()
         if not translated:
@@ -391,8 +389,7 @@ def translate_transcript(
     src = source or transcript.language
     if not src:
         raise TranslationError(
-            "source language unknown: pass --source or use a transcript "
-            "with a language set"
+            "source language unknown: pass --source or use a transcript with a language set"
         )
     segments: list[Segment] = []
     for segment in transcript.segments:
@@ -414,7 +411,9 @@ def _retime(segment: Segment, words: list[str], confidence: float) -> list[Word]
     total duration is preserved bit-for-bit.
     """
     if not words or segment.duration <= 0:
-        return [Word(text=w, start=segment.start, end=segment.end, confidence=confidence) for w in words]
+        return [
+            Word(text=w, start=segment.start, end=segment.end, confidence=confidence) for w in words
+        ]
     weights = [len(w) + 1 for w in words]
     total = sum(weights)
     out: list[Word] = []
