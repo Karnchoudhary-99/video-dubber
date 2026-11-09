@@ -14,7 +14,12 @@ The assembly pipeline for one translated transcript:
 4. **Place** the segments on a silence bed at their original start times
    (:func:`assemble_dub`) and, when a video is given, **mux** the new
    audio track back in with ffmpeg (:func:`mux_audio`).
-5. **Report** (:func:`build_report`): sync drift, fit factors, loudness
+5. **Bed (optional)**: with ``bed_level`` set, the original's non-speech
+   audio (music, ambience) is extracted — speech windows muted, so the
+   original voice never bleeds through — and mixed back under the dub
+   (:mod:`video_dubber.bed`): a dub over a music bed instead of dead
+   silence between lines.
+6. **Report** (:func:`build_report`): sync drift, fit factors, loudness
    error, translation coverage, WER against a same-language reference,
    and a heuristic MOS proxy — the numbers a reviewer checks before
    the dub ships.
@@ -27,6 +32,7 @@ import math
 from dataclasses import dataclass
 
 from video_dubber.audio import AudioData
+from video_dubber.bed import extract_bed, mix_bed
 from video_dubber.extract import ExtractionError, _run
 from video_dubber.quality import mos_proxy as _mos_proxy
 from video_dubber.quality import wer_from_transcripts
@@ -135,6 +141,7 @@ def dub_transcript(
     profile: SpeakerProfile,
     original: AudioData | None = None,
     profiles: dict[str, SpeakerProfile] | None = None,
+    bed_level: float | None = None,
 ) -> tuple[AudioData, list[float], list[tuple[float, float]]]:
     """Render a full dubbed track for a translated transcript.
 
@@ -151,6 +158,13 @@ def dub_transcript(
     any other segment — unlabelled, or labelled with a speaker that has
     no profile — falls back to ``profile`` (the default voice) rather
     than failing the dub.
+
+    With ``bed_level`` set (0–1), the original's non-speech audio is
+    kept as a music bed: extracted from ``original`` (speech windows
+    muted, so the original voice never bleeds under the dub) and mixed
+    under the dub at ``bed_level`` gain. Needs ``original`` — without
+    it there is no bed to extract, so :class:`AssemblyError` is raised.
+    An out-of-range level raises :class:`~video_dubber.bed.BedError`.
     """
     if not transcript.segments:
         raise AssemblyError("cannot dub an empty transcript")
@@ -172,7 +186,14 @@ def dub_transcript(
             fitted = loudness_match(fitted, original)
         placed.append((segment.start, fitted))
     placed_info = [(start, clip.duration) for start, clip in placed]
-    return assemble_dub(placed, total), fit_factors, placed_info
+    dub_audio = assemble_dub(placed, total)
+    if bed_level is not None:
+        if original is None:
+            raise AssemblyError("bed_level needs the original audio to extract the bed from")
+        speech = [(s.start, s.end) for s in transcript.segments if s.words]
+        bed = extract_bed(original, speech)
+        dub_audio = mix_bed(dub_audio, bed, bed_level)
+    return dub_audio, fit_factors, placed_info
 
 
 def mux_audio(video_path: str, audio_path: str, out_path: str) -> str:
@@ -234,6 +255,7 @@ class DubReport:
     translation_coverage: float | None  # dictionary coverage, None if unknown
     word_error_rate: float | None = None  # vs a same-language reference, None if not given
     speakers_dubbed: int = 0  # distinct speaker labels in the dubbed segments
+    bed_level: float | None = None  # music-bed mix level, None when no bed was kept
     mos_proxy: float = 5.0  # heuristic 1-5 quality score, NOT a listening test
     verdict: str = "good"  # "good" | "review" — review when drift/fit/loudness/WER is off
 
@@ -256,6 +278,7 @@ class DubReport:
                     None if self.word_error_rate is None else round(self.word_error_rate, 3)
                 ),
                 "speakers_dubbed": self.speakers_dubbed,
+                "bed_level": self.bed_level,
                 "mos_proxy": self.mos_proxy,
                 "verdict": self.verdict,
             },
@@ -282,6 +305,8 @@ class DubReport:
             lines.append(f"- Word error rate vs reference: {self.word_error_rate:.3f}")
         if self.speakers_dubbed:
             lines.append(f"- Speakers dubbed: {self.speakers_dubbed}")
+        if self.bed_level is not None:
+            lines.append(f"- Background bed level: {self.bed_level:.2f}")
         lines.append(f"- MOS proxy (heuristic, 1-5): {self.mos_proxy:.2f}")
         lines.append(f"- Verdict: **{self.verdict}**")
         return "\n".join(lines) + "\n"
@@ -295,6 +320,7 @@ def build_report(
     original: AudioData | None = None,
     translation_coverage: float | None = None,
     reference_transcript: Transcript | None = None,
+    bed_level: float | None = None,
 ) -> DubReport:
     """Score a dub from the placed clips and the fit factors.
 
@@ -345,6 +371,7 @@ def build_report(
         translation_coverage=translation_coverage,
         word_error_rate=wer,
         speakers_dubbed=len({s.speaker for s in timed if s.speaker is not None}),
+        bed_level=bed_level,
         mos_proxy=_mos_proxy(
             mean_drift,
             max_drift,

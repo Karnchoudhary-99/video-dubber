@@ -14,6 +14,7 @@ from video_dubber.assemble import (
     loudness_match,
 )
 from video_dubber.audio import AudioData, make_silence, make_sine
+from video_dubber.bed import BedError
 from video_dubber.transcript import Segment, Transcript, Word
 from video_dubber.voice import EMBEDDING_DIM, ScriptedVoiceCloner, SpeakerProfile
 
@@ -149,6 +150,65 @@ class TestDubTranscript:
         assert len(placed) == 1
 
 
+class TestDubBed:
+    def _two_segment_transcript(self) -> Transcript:
+        return Transcript(
+            segments=[
+                Segment(words=_words(["hello", "world"], 0.0)),
+                Segment(words=_words(["good", "morning"], 2.0)),
+            ],
+            language="hi",
+        )
+
+    def test_bed_audible_in_gaps_silent_without_it(self):
+        transcript = self._two_segment_transcript()
+        # 97.3 Hz "music" tone across the whole original, so the bed has
+        # energy in the gaps between the speech segments.
+        original = make_sine(97.3, 3.0, amplitude=0.5)
+        gap = int(1.5 * 16_000)
+        plain, _, _ = dub_transcript(transcript, ScriptedVoiceCloner(), _profile(), original)
+        assert plain.samples[gap] == pytest.approx(0.0)
+        dubbed, _, _ = dub_transcript(
+            transcript, ScriptedVoiceCloner(), _profile(), original, bed_level=0.3
+        )
+        assert dubbed.samples[gap] == pytest.approx(original.samples[gap] * 0.3, abs=0.005)
+
+    def test_bed_is_silent_under_dubbed_speech(self):
+        # The bed is extracted by muting the original's speech windows,
+        # so the original voice can never bleed through under the dub:
+        # the with-bed dub is identical to the plain dub under speech.
+        # (duck_bed exists for beds supplied from elsewhere, e.g. a
+        # music file — see tests/test_bed.py.)
+        transcript = self._two_segment_transcript()
+        original = make_sine(97.3, 3.0, amplitude=0.5)
+        mid_speech = int(0.5 * 16_000)
+        plain, _, _ = dub_transcript(transcript, ScriptedVoiceCloner(), _profile(), original)
+        dubbed, _, _ = dub_transcript(
+            transcript, ScriptedVoiceCloner(), _profile(), original, bed_level=0.3
+        )
+        assert dubbed.samples[mid_speech] == pytest.approx(plain.samples[mid_speech])
+
+    def test_bed_needs_original_audio(self):
+        with pytest.raises(AssemblyError, match="bed_level needs the original"):
+            dub_transcript(
+                self._two_segment_transcript(),
+                ScriptedVoiceCloner(),
+                _profile(),
+                bed_level=0.3,
+            )
+
+    def test_bed_rejects_out_of_range_level(self):
+        original = make_sine(97.3, 3.0, amplitude=0.5)
+        with pytest.raises(BedError):
+            dub_transcript(
+                self._two_segment_transcript(),
+                ScriptedVoiceCloner(),
+                _profile(),
+                original,
+                bed_level=1.5,
+            )
+
+
 class TestBuildReport:
     def test_good_verdict_for_clean_dub(self):
         transcript = Transcript(segments=[Segment(words=_words(["hello"], 0.0))], language="hi")
@@ -215,6 +275,17 @@ class TestBuildReport:
         )
         assert report.loudness_error_db is not None
         assert abs(report.loudness_error_db) < 3.0
+
+    def test_bed_level_reported_when_a_bed_was_kept(self):
+        transcript = Transcript(segments=[Segment(words=_words(["hello"], 0.0))], language="hi")
+        dub, factors, placed = dub_transcript(transcript, ScriptedVoiceCloner(), _profile())
+        plain = build_report(transcript, placed, factors, dub)
+        assert plain.bed_level is None
+        assert "bed_level" not in plain.to_markdown()
+        with_bed = build_report(transcript, placed, factors, dub, bed_level=0.3)
+        assert with_bed.bed_level == 0.3
+        assert json.loads(with_bed.to_json())["bed_level"] == 0.3
+        assert "Background bed level: 0.30" in with_bed.to_markdown()
 
 
 class _RecordingCloner:

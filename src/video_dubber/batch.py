@@ -59,6 +59,7 @@ _JOB_KEYS = frozenset(_PATH_FIELDS) | {
     "mux",
     "model",
     "profiles",
+    "bed_level",
 }
 _DEFAULT_KEYS = _JOB_KEYS - {"name"}
 
@@ -85,6 +86,7 @@ class BatchJob:
     max_chars: int | None = None
     mux: bool = True
     profiles: dict[str, str] | None = None  # speaker name -> profile JSON path
+    bed_level: float | None = None  # keep the video's music bed under the dub (0-1)
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -105,6 +107,12 @@ class BatchJob:
             raise BatchError(f"job {self.name!r}: max_chars must be positive")
         if self.profiles is not None and not isinstance(self.profiles, dict):
             raise BatchError(f"job {self.name!r}: 'profiles' must be a speaker->path object")
+        if self.bed_level is not None and not 0.0 <= self.bed_level <= 1.0:
+            raise BatchError(f"job {self.name!r}: 'bed_level' must be between 0 and 1")
+        if self.bed_level is not None and not self.video:
+            raise BatchError(
+                f"job {self.name!r}: 'bed_level' needs a video job (no original audio)"
+            )
 
 
 @dataclass
@@ -294,6 +302,7 @@ def run_job(
             profile,
             original,
             profiles=_load_profiles(job.profiles),
+            bed_level=job.bed_level,
         )
         save_wav(dubbed_wav, dub_audio)
         report = build_report(
@@ -303,6 +312,7 @@ def run_job(
             dub_audio,
             original,
             translation_coverage=translator.last_coverage,
+            bed_level=job.bed_level,
         )
         outputs = {"dubbed_wav": dubbed_wav}
         if job.video is not None and job.mux:
