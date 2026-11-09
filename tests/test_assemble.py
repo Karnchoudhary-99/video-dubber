@@ -173,7 +173,12 @@ class TestDubBed:
         )
         assert dubbed.samples[gap] == pytest.approx(original.samples[gap] * 0.3, abs=0.005)
 
-    def test_bed_is_ducked_under_dubbed_speech(self):
+    def test_bed_is_silent_under_dubbed_speech(self):
+        # The bed is extracted by muting the original's speech windows,
+        # so the original voice can never bleed through under the dub:
+        # the with-bed dub is identical to the plain dub under speech.
+        # (duck_bed exists for beds supplied from elsewhere, e.g. a
+        # music file — see tests/test_bed.py.)
         transcript = self._two_segment_transcript()
         original = make_sine(97.3, 3.0, amplitude=0.5)
         mid_speech = int(0.5 * 16_000)
@@ -181,11 +186,7 @@ class TestDubBed:
         dubbed, _, _ = dub_transcript(
             transcript, ScriptedVoiceCloner(), _profile(), original, bed_level=0.3
         )
-        # The speech part is identical in both dubs; only the bed differs,
-        # and under speech it is ducked to 0.15 of the 0.3 mix level.
-        assert dubbed.samples[mid_speech] - plain.samples[mid_speech] == pytest.approx(
-            original.samples[mid_speech] * 0.3 * 0.15, abs=0.005
-        )
+        assert dubbed.samples[mid_speech] == pytest.approx(plain.samples[mid_speech])
 
     def test_bed_needs_original_audio(self):
         with pytest.raises(AssemblyError, match="bed_level needs the original"):

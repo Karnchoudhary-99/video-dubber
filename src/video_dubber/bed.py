@@ -9,11 +9,16 @@ under the new voice. The pipeline:
    the speech windows (the transcript's segment ranges), leaving the
    gaps — music and ambience — untouched. Short fades at the cut edges
    keep the bed click-free.
-2. **Duck** (:func:`duck_bed`): attenuate the bed to ``duck_level``
+2. **Duck** (:func:`duck_bed`): for a bed supplied from elsewhere (e.g.
+   a music file mixed under the dub), attenuate it to ``duck_level``
    underneath the placed dubbed clips, with fades, so the new voice
    stays intelligible while the music is still audible.
-3. **Mix** (:func:`mix_bed`): add the ducked bed under the dubbed track
-   at ``bed_level`` gain, peak-clamped.
+3. **Mix** (:func:`mix_bed`): add the bed under the dubbed track at
+   ``bed_level`` gain, peak-clamped. The bed extracted from the
+   original is already silent under the original speech (the original
+   voice must never bleed through), so it needs no ducking — it is
+   simply audible in the gaps, at full level, and silent under the
+   dubbed voice.
 
 All three steps are pure stdlib float math on :class:`AudioData`, so
 they run anywhere the rest of the pipeline does.
