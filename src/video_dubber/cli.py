@@ -54,6 +54,7 @@ from video_dubber.enhance import (
 )
 from video_dubber.extract import ExtractionError, extract_audio
 from video_dubber.fidelity import FidelityError, check_fidelity
+from video_dubber.report import render_html_report
 from video_dubber.transcribe import (
     ScriptedTranscriber,
     TranscriptionError,
@@ -277,7 +278,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_dub.add_argument(
         "--report-format",
-        choices=["json", "md"],
+        choices=["json", "md", "html"],
         default="json",
         help="Quality report format (default json).",
     )
@@ -763,9 +764,13 @@ def _cmd_dub(args: argparse.Namespace) -> int:
             f"(gain {enhancement.gain_db:+.1f} dB)"
         )
     if args.report_out:
-        text = report.to_json() if args.report_format == "json" else report.to_markdown()
+        formats = {
+            "json": report.to_json(),
+            "md": report.to_markdown(),
+            "html": render_html_report(report),
+        }
         with open(args.report_out, "w", encoding="utf-8") as fh:
-            fh.write(text)
+            fh.write(formats[args.report_format])
         print(f"wrote {args.report_out}")
     if report.speakers_dubbed:
         print(f"speakers dubbed: {report.speakers_dubbed}")
@@ -825,7 +830,11 @@ def _cmd_batch(args: argparse.Namespace) -> int:
         f"batch done: {summary.succeeded} ok, {summary.failed} failed, "
         f"{summary.skipped} skipped out of {summary.total}"
     )
-    print(f"reports: {args.out_dir}/batch-report.json, {args.out_dir}/batch-report.md")
+    print(
+        "reports: "
+        f"{args.out_dir}/batch-report.json, {args.out_dir}/batch-report.md, "
+        f"{args.out_dir}/batch-report.html"
+    )
     return 1 if summary.failed else 0
 
 

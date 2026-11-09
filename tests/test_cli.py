@@ -709,6 +709,38 @@ def test_cli_dub_renders_track_and_report(tmp_path, capsys):
     assert data["verdict"] == "good"
 
 
+def test_cli_dub_html_report(tmp_path, capsys):
+    transcript = tmp_path / "hi.json"
+    _write_dub_transcript(transcript)
+    profile = tmp_path / "dub.json"
+    _write_dub_profile(profile)
+    out = tmp_path / "dub.wav"
+    report = tmp_path / "report.html"
+    assert (
+        main(
+            [
+                "dub",
+                str(transcript),
+                "--profile",
+                str(profile),
+                "--out",
+                str(out),
+                "--report-out",
+                str(report),
+                "--report-format",
+                "html",
+            ]
+        )
+        == 0
+    )
+    assert "verdict: good" in capsys.readouterr().out
+    text = report.read_text(encoding="utf-8")
+    assert "<!DOCTYPE html>" in text
+    assert 'class="banner good"' in text
+    assert "<h2>Segments</h2>" in text
+    assert "Segments dubbed" in text
+
+
 def test_cli_dub_with_bed_level(tmp_path, capsys):
     transcript = tmp_path / "hi.json"
     _write_dub_transcript(transcript)

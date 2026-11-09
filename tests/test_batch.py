@@ -324,6 +324,9 @@ def test_summarize_writes_report_files(tmp_path):
     assert (out / "batch-report.json").exists()
     assert (out / "batch-report.md").exists()
     assert "Batch dub report" in (out / "batch-report.md").read_text(encoding="utf-8")
+    assert (out / "batch-report.html").exists()
+    assert "<!DOCTYPE html>" in (out / "batch-report.html").read_text(encoding="utf-8")
+    assert "Batch dub report" in (out / "batch-report.html").read_text(encoding="utf-8")
 
 
 def test_manifest_resolves_profiles_paths(tmp_path):
