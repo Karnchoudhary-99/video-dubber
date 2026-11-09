@@ -215,3 +215,72 @@ class TestBuildReport:
         )
         assert report.loudness_error_db is not None
         assert abs(report.loudness_error_db) < 3.0
+
+
+class _RecordingCloner:
+    """VoiceCloner double that records which profile each segment used."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    @property
+    def name(self) -> str:
+        return "recording"
+
+    def clone(self, name, audios, reference_files=None):
+        raise NotImplementedError
+
+    def synthesize(self, text, profile, words_per_minute=None):
+        self.calls.append((text, profile.name))
+        return make_sine(profile.base_pitch_hz, 0.5)
+
+
+def _two_speaker_transcript() -> Transcript:
+    return Transcript(
+        segments=[
+            Segment(words=_words(["hello", "there"], start=0.0), speaker="Asha"),
+            Segment(words=_words(["good", "morning"], start=2.0), speaker="Ravi"),
+            Segment(words=_words(["and", "welcome"], start=4.0)),
+        ],
+        language="hi",
+    )
+
+
+class TestMultiSpeakerDub:
+    def test_each_speaker_gets_their_own_voice(self):
+        asha = SpeakerProfile(
+            name="Asha", embedding=[0.25] * EMBEDDING_DIM, base_pitch_hz=220.0
+        )
+        ravi = SpeakerProfile(
+            name="Ravi", embedding=[0.1] * EMBEDDING_DIM, base_pitch_hz=110.0
+        )
+        default = SpeakerProfile(
+            name="Narrator", embedding=[0.2] * EMBEDDING_DIM, base_pitch_hz=150.0
+        )
+        cloner = _RecordingCloner()
+        audio, _, _ = dub_transcript(
+            _two_speaker_transcript(),
+            cloner,
+            default,
+            profiles={"Asha": asha, "Ravi": ravi},
+        )
+        assert [name for _, name in cloner.calls] == ["Asha", "Ravi", "Narrator"]
+        assert audio.duration == pytest.approx(5.0)
+
+    def test_unknown_speaker_falls_back_to_default_voice(self):
+        default = _profile()
+        cloner = _RecordingCloner()
+        transcript = Transcript(
+            segments=[Segment(words=_words(["mystery", "voice"], start=0.0), speaker="Ghost")],
+            language="hi",
+        )
+        dub_transcript(transcript, cloner, default, profiles={})
+        assert cloner.calls == [("mystery voice", "Test")]
+
+    def test_report_counts_speakers_dubbed(self):
+        transcript = _two_speaker_transcript()
+        report = build_report(transcript, [(0.0, 1.0), (2.0, 1.0), (4.0, 1.0)], [1.0] * 3, make_sine(220.0, 5.0))
+        assert report.speakers_dubbed == 2
+        plain = Transcript(segments=[Segment(words=_words(["solo"], start=0.0))])
+        report = build_report(plain, [(0.0, 0.5)], [1.0], make_sine(220.0, 0.5))
+        assert report.speakers_dubbed == 0
