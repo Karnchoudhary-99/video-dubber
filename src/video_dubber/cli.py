@@ -176,6 +176,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Also write <out-stem>.srt and <out-stem>.vtt of the translated transcript.",
     )
     p_dub.add_argument("--original", help="Original audio WAV (for loudness matching).")
+    p_dub.add_argument(
+        "--bed-level",
+        type=float,
+        default=None,
+        help="Keep the original's music bed under the dub at this mix level "
+        "(0-1; needs --original).",
+    )
     p_dub.add_argument("--out", required=True, help="Output dubbed WAV path.")
     p_dub.add_argument("--video", help="Original video to mux the dub into.")
     p_dub.add_argument("--mux-out", help="Output video path (needs --video).")
@@ -420,6 +427,12 @@ def _cmd_dub(args: argparse.Namespace) -> int:
     if args.video and not args.mux_out:
         print("error: --video needs --mux-out", file=sys.stderr)
         return 2
+    if args.bed_level is not None and not args.original:
+        print("error: --bed-level needs --original", file=sys.stderr)
+        return 2
+    if args.bed_level is not None and not 0.0 <= args.bed_level <= 1.0:
+        print("error: --bed-level must be between 0 and 1", file=sys.stderr)
+        return 2
     with open(args.transcript, encoding="utf-8") as fh:
         transcript = Transcript.from_json(fh.read())
     with open(args.profile, encoding="utf-8") as fh:
@@ -431,11 +444,22 @@ def _cmd_dub(args: argparse.Namespace) -> int:
         with open(args.reference, encoding="utf-8") as fh:
             reference = Transcript.from_json(fh.read())
     dub_audio, fit_factors, placed = dub_transcript(
-        transcript, ScriptedVoiceCloner(), profile, original, profiles=profiles
+        transcript,
+        ScriptedVoiceCloner(),
+        profile,
+        original,
+        profiles=profiles,
+        bed_level=args.bed_level,
     )
     save_wav(args.out, dub_audio)
     report = build_report(
-        transcript, placed, fit_factors, dub_audio, original, reference_transcript=reference
+        transcript,
+        placed,
+        fit_factors,
+        dub_audio,
+        original,
+        reference_transcript=reference,
+        bed_level=args.bed_level,
     )
     print(f"dubbed {report.segments_dubbed} segments, {dub_audio.duration:.2f}s -> {args.out}")
     print(
@@ -445,6 +469,8 @@ def _cmd_dub(args: argparse.Namespace) -> int:
     )
     if report.word_error_rate is not None:
         print(f"word error rate vs reference: {report.word_error_rate:.3f}")
+    if report.bed_level is not None:
+        print(f"background bed level: {report.bed_level:.2f}")
     if args.report_out:
         text = report.to_json() if args.report_format == "json" else report.to_markdown()
         with open(args.report_out, "w", encoding="utf-8") as fh:

@@ -448,6 +448,90 @@ def test_cli_dub_renders_track_and_report(tmp_path, capsys):
     assert data["verdict"] == "good"
 
 
+def test_cli_dub_with_bed_level(tmp_path, capsys):
+    transcript = tmp_path / "hi.json"
+    _write_dub_transcript(transcript)
+    profile = tmp_path / "dub.json"
+    _write_dub_profile(profile)
+    original = tmp_path / "orig.wav"
+    save_wav(str(original), make_sine(97.3, 2.5, amplitude=0.5))
+    out = tmp_path / "dub.wav"
+    report = tmp_path / "report.json"
+    assert (
+        main(
+            [
+                "dub",
+                str(transcript),
+                "--profile",
+                str(profile),
+                "--original",
+                str(original),
+                "--bed-level",
+                "0.3",
+                "--out",
+                str(out),
+                "--report-out",
+                str(report),
+            ]
+        )
+        == 0
+    )
+    assert "background bed level: 0.30" in capsys.readouterr().out
+    assert json.loads(report.read_text(encoding="utf-8"))["bed_level"] == 0.3
+    # The bed is audible in the gap between the two segments (1.0-2.0s).
+    assert load_wav(str(out)).samples[int(1.5 * 16_000)] != pytest.approx(0.0)
+
+
+def test_cli_dub_bed_level_without_original_fails(tmp_path, capsys):
+    transcript = tmp_path / "hi.json"
+    _write_dub_transcript(transcript)
+    profile = tmp_path / "dub.json"
+    _write_dub_profile(profile)
+    assert (
+        main(
+            [
+                "dub",
+                str(transcript),
+                "--profile",
+                str(profile),
+                "--bed-level",
+                "0.3",
+                "--out",
+                str(tmp_path / "dub.wav"),
+            ]
+        )
+        == 2
+    )
+    assert "--bed-level needs --original" in capsys.readouterr().err
+
+
+def test_cli_dub_bed_level_out_of_range_fails(tmp_path, capsys):
+    transcript = tmp_path / "hi.json"
+    _write_dub_transcript(transcript)
+    profile = tmp_path / "dub.json"
+    _write_dub_profile(profile)
+    original = tmp_path / "orig.wav"
+    save_wav(str(original), make_sine(97.3, 2.5, amplitude=0.5))
+    assert (
+        main(
+            [
+                "dub",
+                str(transcript),
+                "--profile",
+                str(profile),
+                "--original",
+                str(original),
+                "--bed-level",
+                "1.5",
+                "--out",
+                str(tmp_path / "dub.wav"),
+            ]
+        )
+        == 2
+    )
+    assert "--bed-level must be between 0 and 1" in capsys.readouterr().err
+
+
 @ffmpeg_missing
 def test_cli_dub_with_video_mux(tmp_path):
     transcript = tmp_path / "hi.json"
