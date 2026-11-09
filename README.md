@@ -18,6 +18,7 @@ keeping the speaker's voice.
 - [x] Audio enhancement (loudness normalize, hum cut, noise gate, silence trim)
 - [x] Translation fidelity (round-trip back-translation check, flags unstable segments)
 - [x] Project config file (dubber.toml defaults for translate/dub/enhance/diarize)
+- [x] HTML quality reports (per-segment table, verdict banner, batch summary)
 - [ ] Self-review checklist, then public
 
 ## Quick start
@@ -361,8 +362,33 @@ video-dubber batch manifest.json --out-dir out/
   after the first failure. One bad job never kills the rest — failures
   are listed with their error in the summary.
 - `batch-report.json` / `batch-report.md` land in the output dir with
-  per-job verdicts, MOS proxies, WERs, and totals.
+  per-job verdicts, MOS proxies, WERs, and totals. `batch-report.html`
+  is the same summary as a self-contained page (failed jobs highlighted,
+  failures listed).
 - Try it without any models: `python examples/demo_batch.py`.
+
+## HTML quality reports
+
+The JSON and Markdown reports are for machines and terminals; the HTML
+report is the one you open in a browser and hand to a reviewer:
+
+```bash
+video-dubber dub translated.json --profile asha.json --out dubbed.wav \
+  --report-out report.html --report-format html
+```
+
+- A **verdict banner** (green `good`, amber `review`), the **MOS proxy**
+  as a bar, and the headline metrics (sync drift, fit factors, loudness
+  error, WER, translation coverage).
+- A **per-segment table** — start/end, speaker, text, drift, fit factor —
+  with rows flagged when a segment drifted over 0.10s or stretched
+  outside 0.8–1.25, so the reviewer sees exactly which segment to
+  re-record instead of an average.
+- Self-contained (stdlib only, inline CSS, no external assets) and fully
+  escaped — a segment reading `<script>alert(1)</script>` renders as
+  text, never as markup.
+- Demo: `python examples/demo_report.py` — the slow second segment flips
+  the verdict to `review` with exactly one flagged row.
 
 ## Status
 
@@ -381,7 +407,11 @@ reports, and a grapheme-aware dictionary tokenizer (the check caught
 the old `\w` tokenizer shattering Devanagari words at combining marks).
 Project config file is done (315 tests): `dubber.toml` defaults for
 translate/dub/enhance/diarize/clone, a `config` subcommand, and an
-example file. Remaining: the self-review checklist and public flip — the
+example file. HTML quality reports are done (326 tests): a self-contained
+`report.py` renderer with a verdict banner, MOS proxy bar and a
+per-segment table flagging drift over 0.10s or fits outside 0.8–1.25,
+`dub --report-format html`, `batch-report.html`, and an end-to-end demo
+run in CI. Remaining: the self-review checklist and public flip — the
 project stays private per the 5–7 day pace rule (started 2026-11-08,
 earliest completion 2026-11-13).
 
