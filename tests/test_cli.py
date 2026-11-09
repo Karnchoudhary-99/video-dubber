@@ -582,3 +582,138 @@ def test_cli_batch_failure_does_not_stop_others(tmp_path, capsys):
 def test_cli_batch_missing_manifest(tmp_path, capsys):
     assert main(["batch", "nope.json", "--out-dir", str(tmp_path / "out")]) == 1
     assert "error:" in capsys.readouterr().err
+
+
+def test_cli_dub_with_profiles_and_subtitles(tmp_path, capsys):
+    from video_dubber.voice import EMBEDDING_DIM, SpeakerProfile
+
+    transcript = tmp_path / "hi.json"
+    transcript.write_text(
+        Transcript(
+            segments=[
+                {
+                    "words": [
+                        {"text": "नमस्ते", "start": 0.0, "end": 0.5},
+                        {"text": "दुनिया", "start": 0.5, "end": 1.0},
+                    ],
+                    "speaker": "Asha",
+                },
+                {
+                    "words": [{"text": "शानदार", "start": 2.0, "end": 2.5}],
+                    "speaker": "Ravi",
+                },
+            ],
+            language="hi",
+        ).to_json()
+    )
+    default = tmp_path / "dub.json"
+    _write_dub_profile(default)
+    for name, pitch in (("asha", 220.0), ("ravi", 110.0)):
+        (tmp_path / f"{name}.json").write_text(
+            SpeakerProfile(
+                name=name.capitalize(),
+                embedding=[0.25] * EMBEDDING_DIM,
+                base_pitch_hz=pitch,
+            ).to_json()
+        )
+    profiles_map = tmp_path / "profiles.json"
+    profiles_map.write_text(json.dumps({"Asha": "asha.json", "Ravi": "ravi.json"}))
+    out = tmp_path / "dub.wav"
+    report = tmp_path / "report.json"
+    assert (
+        main(
+            [
+                "dub",
+                str(transcript),
+                "--profile",
+                str(default),
+                "--profiles",
+                str(profiles_map),
+                "--out",
+                str(out),
+                "--subtitles",
+                "--report-out",
+                str(report),
+                "--report-format",
+                "json",
+            ]
+        )
+        == 0
+    )
+    assert "speakers dubbed: 2" in capsys.readouterr().out
+    assert load_wav(str(out)).duration == pytest.approx(2.5)
+    assert json.loads(report.read_text(encoding="utf-8"))["speakers_dubbed"] == 2
+    srt = (tmp_path / "dub.srt").read_text(encoding="utf-8")
+    assert "नमस्ते दुनिया" in srt and "-->" in srt
+    assert (tmp_path / "dub.vtt").read_text(encoding="utf-8").startswith("WEBVTT")
+
+
+def test_cli_dub_profiles_map_missing_file_fails(tmp_path, capsys):
+    transcript = tmp_path / "hi.json"
+    _write_dub_transcript(transcript)
+    profile = tmp_path / "dub.json"
+    _write_dub_profile(profile)
+    bad_map = tmp_path / "profiles.json"
+    bad_map.write_text(json.dumps({"Asha": "nope.json"}))
+    assert (
+        main(
+            [
+                "dub",
+                str(transcript),
+                "--profile",
+                str(profile),
+                "--profiles",
+                str(bad_map),
+                "--out",
+                str(tmp_path / "dub.wav"),
+            ]
+        )
+        == 1
+    )
+    assert "cannot read profile for speaker 'Asha'" in capsys.readouterr().err
+
+
+def test_cli_voices_list_and_add(tmp_path, capsys):
+    library = tmp_path / "voices.json"
+    # Missing library: friendly message, exit 0.
+    assert main(["voices", str(library)]) == 0
+    assert "no voice library" in capsys.readouterr().out
+    profile = tmp_path / "asha.json"
+    _write_dub_profile(profile)
+    assert main(["voices", str(library), "--add", str(profile)]) == 0
+    out = capsys.readouterr().out
+    assert "added Dub to" in out
+    assert "1 voice(s)" in out
+    assert "Dub: 180 Hz" in out
+    # Listing again shows the same voice.
+    assert main(["voices", str(library)]) == 0
+    assert "Dub: 180 Hz" in capsys.readouterr().out
+    # Duplicate add without --overwrite fails.
+    assert main(["voices", str(library), "--add", str(profile)]) == 1
+    assert "already has a profile" in capsys.readouterr().err
+    assert main(["voices", str(library), "--add", str(profile), "--overwrite"]) == 0
+
+
+def test_cli_clone_adds_to_library(tmp_path, capsys):
+    ref = tmp_path / "ref.wav"
+    _make_reference_wav(ref)
+    out = tmp_path / "asha.json"
+    library = tmp_path / "voices.json"
+    assert (
+        main(
+            [
+                "clone",
+                str(ref),
+                "--name",
+                "Asha",
+                "--out",
+                str(out),
+                "--library",
+                str(library),
+            ]
+        )
+        == 0
+    )
+    assert "added Asha to library" in capsys.readouterr().out
+    assert main(["voices", str(library)]) == 0
+    assert "Asha:" in capsys.readouterr().out

@@ -134,6 +134,7 @@ def dub_transcript(
     cloner: VoiceCloner,
     profile: SpeakerProfile,
     original: AudioData | None = None,
+    profiles: dict[str, SpeakerProfile] | None = None,
 ) -> tuple[AudioData, list[float], list[tuple[float, float]]]:
     """Render a full dubbed track for a translated transcript.
 
@@ -144,6 +145,12 @@ def dub_transcript(
     factors and the ``(start, duration)`` of every placed clip, so the
     report can measure sync drift. The dub bed spans the transcript's
     full duration (last word end).
+
+    With ``profiles`` (a speaker-name → profile map), a segment whose
+    ``speaker`` label is in the map is rendered in that speaker's voice;
+    any other segment — unlabelled, or labelled with a speaker that has
+    no profile — falls back to ``profile`` (the default voice) rather
+    than failing the dub.
     """
     if not transcript.segments:
         raise AssemblyError("cannot dub an empty transcript")
@@ -155,7 +162,10 @@ def dub_transcript(
     for segment in transcript.segments:
         if not segment.words:
             continue
-        spoken = cloner.synthesize(segment.text, profile)
+        voice = profile
+        if profiles is not None and segment.speaker is not None:
+            voice = profiles.get(segment.speaker, profile)
+        spoken = cloner.synthesize(segment.text, voice)
         fitted, factor = fit_to_window(spoken, segment.duration)
         fit_factors.append(factor)
         if original is not None:
@@ -223,6 +233,7 @@ class DubReport:
     loudness_error_db: float | None  # dub RMS vs original RMS, None if no original
     translation_coverage: float | None  # dictionary coverage, None if unknown
     word_error_rate: float | None = None  # vs a same-language reference, None if not given
+    speakers_dubbed: int = 0  # distinct speaker labels in the dubbed segments
     mos_proxy: float = 5.0  # heuristic 1-5 quality score, NOT a listening test
     verdict: str = "good"  # "good" | "review" — review when drift/fit/loudness/WER is off
 
@@ -244,6 +255,7 @@ class DubReport:
                 "word_error_rate": (
                     None if self.word_error_rate is None else round(self.word_error_rate, 3)
                 ),
+                "speakers_dubbed": self.speakers_dubbed,
                 "mos_proxy": self.mos_proxy,
                 "verdict": self.verdict,
             },
@@ -268,6 +280,8 @@ class DubReport:
             lines.append(f"- Translation coverage: {self.translation_coverage:.0%}")
         if self.word_error_rate is not None:
             lines.append(f"- Word error rate vs reference: {self.word_error_rate:.3f}")
+        if self.speakers_dubbed:
+            lines.append(f"- Speakers dubbed: {self.speakers_dubbed}")
         lines.append(f"- MOS proxy (heuristic, 1-5): {self.mos_proxy:.2f}")
         lines.append(f"- Verdict: **{self.verdict}**")
         return "\n".join(lines) + "\n"
@@ -330,6 +344,7 @@ def build_report(
         loudness_error_db=loudness_error,
         translation_coverage=translation_coverage,
         word_error_rate=wer,
+        speakers_dubbed=len({s.speaker for s in timed if s.speaker is not None}),
         mos_proxy=_mos_proxy(
             mean_drift,
             max_drift,

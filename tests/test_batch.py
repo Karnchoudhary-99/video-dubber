@@ -301,3 +301,80 @@ def test_summarize_writes_report_files(tmp_path):
     assert (out / "batch-report.json").exists()
     assert (out / "batch-report.md").exists()
     assert "Batch dub report" in (out / "batch-report.md").read_text(encoding="utf-8")
+
+
+def test_manifest_resolves_profiles_paths(tmp_path):
+    ravi = tmp_path / "ravi.json"
+    ravi.write_text("{}")
+    manifest = _manifest(
+        tmp_path,
+        [_job("clip1", profiles={"Ravi": "ravi.json"})],
+    )
+    assert manifest.jobs[0].profiles == {"Ravi": str(tmp_path / "ravi.json")}
+
+
+def test_manifest_rejects_missing_profile_file(tmp_path):
+    with pytest.raises(BatchError, match="profile for speaker 'Ravi' not found"):
+        _manifest(tmp_path, [_job("clip1", profiles={"Ravi": "missing.json"})])
+
+
+def test_job_rejects_non_dict_profiles():
+    with pytest.raises(BatchError, match="'profiles' must be a speaker->path object"):
+        BatchJob(name="x", target="hi", profile="p.json", transcript="t.json", profiles=["a"])
+
+
+def test_run_job_writes_translated_subtitles(tmp_path):
+    from video_dubber.batch import run_job
+
+    transcript = _transcript_file(tmp_path, "src.json", "hello mars good morning")
+    job = BatchJob(
+        name="clip1", target="hi", profile=_profile_file(tmp_path), transcript=transcript
+    )
+    result = run_job(job, str(tmp_path / "out"))
+    assert result.status == "ok"
+    assert result.outputs["translated_srt"].endswith("translated.srt")
+    assert result.outputs["translated_vtt"].endswith("translated.vtt")
+    with open(result.outputs["translated_srt"], encoding="utf-8") as fh:
+        srt = fh.read()
+    assert "नमस्ते" in srt  # translated text, timed cues
+    assert "-->" in srt
+    with open(result.outputs["translated_vtt"], encoding="utf-8") as fh:
+        assert fh.read().startswith("WEBVTT")
+
+
+def test_run_job_with_speaker_profiles_uses_them(tmp_path):
+    from video_dubber.batch import run_job
+    from video_dubber.transcript import Segment, Transcript, Word
+    from video_dubber.voice import EMBEDDING_DIM, SpeakerProfile
+
+    # Two speakers in the source transcript; each gets their own voice.
+    words = [
+        Word(text="hello", start=0.0, end=0.4),
+        Word(text="mars", start=0.4, end=0.8),
+        Word(text="good", start=1.0, end=1.4),
+        Word(text="morning", start=1.4, end=1.8),
+    ]
+    transcript = Transcript(
+        segments=[
+            Segment(words=words[:2], speaker="Asha"),
+            Segment(words=words[2:], speaker="Ravi"),
+        ],
+        language="en",
+    )
+    src = tmp_path / "src.json"
+    src.write_text(transcript.to_json())
+    ravi = SpeakerProfile(name="Ravi", embedding=[0.1] * EMBEDDING_DIM, base_pitch_hz=110.0)
+    ravi_path = tmp_path / "ravi.json"
+    ravi_path.write_text(ravi.to_json())
+    job = BatchJob(
+        name="clip1",
+        target="hi",
+        profile=_profile_file(tmp_path),
+        transcript=str(src),
+        profiles={"Ravi": str(ravi_path)},
+    )
+    result = run_job(job, str(tmp_path / "out"))
+    assert result.status == "ok"
+    with open(result.outputs["report"], encoding="utf-8") as fh:
+        report = json.loads(fh.read())
+    assert report["speakers_dubbed"] == 2

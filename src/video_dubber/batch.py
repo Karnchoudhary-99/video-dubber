@@ -58,6 +58,7 @@ _JOB_KEYS = frozenset(_PATH_FIELDS) | {
     "max_chars",
     "mux",
     "model",
+    "profiles",
 }
 _DEFAULT_KEYS = _JOB_KEYS - {"name"}
 
@@ -83,6 +84,7 @@ class BatchJob:
     reference: str | None = None
     max_chars: int | None = None
     mux: bool = True
+    profiles: dict[str, str] | None = None  # speaker name -> profile JSON path
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -101,6 +103,8 @@ class BatchJob:
             raise BatchError(f"job {self.name!r}: backend scripted needs a 'script' word list")
         if self.max_chars is not None and self.max_chars <= 0:
             raise BatchError(f"job {self.name!r}: max_chars must be positive")
+        if self.profiles is not None and not isinstance(self.profiles, dict):
+            raise BatchError(f"job {self.name!r}: 'profiles' must be a speaker->path object")
 
 
 @dataclass
@@ -144,6 +148,11 @@ class BatchManifest:
                 key: (_resolve(value, base_dir) if key in _PATH_FIELDS else value)
                 for key, value in merged.items()
             }
+            if isinstance(merged.get("profiles"), dict):
+                merged["profiles"] = {
+                    speaker: _resolve(path, base_dir)
+                    for speaker, path in merged["profiles"].items()
+                }
             try:
                 job = BatchJob(**merged)
             except TypeError as exc:
@@ -177,6 +186,12 @@ def _check_files(job: BatchJob) -> None:
         path = getattr(job, key)
         if path is not None and not os.path.exists(path):
             raise BatchError(f"job {job.name!r}: {key} file not found: {path}")
+    if job.profiles:
+        for speaker, path in job.profiles.items():
+            if not os.path.exists(path):
+                raise BatchError(
+                    f"job {job.name!r}: profile for speaker {speaker!r} not found: {path}"
+                )
 
 
 # --- Running ------------------------------------------------------------------
@@ -199,6 +214,22 @@ class BatchJobResult:
 def _load_transcript(path: str) -> Transcript:
     with open(path, encoding="utf-8") as fh:
         return Transcript.from_json(fh.read())
+
+
+def _load_profiles(
+    paths: dict[str, str] | None,
+) -> dict[str, SpeakerProfile] | None:
+    """Load a speaker-name -> profile-file map into real profiles."""
+    if not paths:
+        return None
+    profiles: dict[str, SpeakerProfile] = {}
+    for speaker, path in paths.items():
+        try:
+            with open(path, encoding="utf-8") as fh:
+                profiles[speaker] = SpeakerProfile.from_json(fh.read())
+        except OSError as exc:
+            raise BatchError(f"cannot read profile for speaker {speaker!r}: {exc}") from exc
+    return profiles
 
 
 def run_job(
@@ -258,7 +289,11 @@ def run_job(
             max_chars=job.max_chars,
         )
         dub_audio, fit_factors, placed = dub_transcript(
-            translated, cloner or ScriptedVoiceCloner(), profile, original
+            translated,
+            cloner or ScriptedVoiceCloner(),
+            profile,
+            original,
+            profiles=_load_profiles(job.profiles),
         )
         save_wav(dubbed_wav, dub_audio)
         report = build_report(
@@ -282,6 +317,14 @@ def run_job(
         with open(translated_path, "w", encoding="utf-8") as fh:
             fh.write(translated.to_json())
         outputs["translated"] = translated_path
+        srt_path = os.path.join(job_dir, "translated.srt")
+        with open(srt_path, "w", encoding="utf-8") as fh:
+            fh.write(translated.to_srt())
+        outputs["translated_srt"] = srt_path
+        vtt_path = os.path.join(job_dir, "translated.vtt")
+        with open(vtt_path, "w", encoding="utf-8") as fh:
+            fh.write(translated.to_vtt())
+        outputs["translated_vtt"] = vtt_path
         report_path = os.path.join(job_dir, "report.json")
         with open(report_path, "w", encoding="utf-8") as fh:
             fh.write(report.to_json())

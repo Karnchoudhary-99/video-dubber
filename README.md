@@ -12,6 +12,7 @@ keeping the speaker's voice.
 - [x] Voice cloning (few-shot speaker embedding, TTS synthesis)
 - [x] Dub assembly (lip-sync timing, loudness match, mux back to video)
 - [x] CLI + batch mode, quality report (WER, MOS proxy, sync drift)
+- [x] Multi-speaker dubbing, voice library, subtitle export
 - [ ] Self-review checklist, then public
 
 ## Quick start
@@ -132,7 +133,42 @@ video-dubber synthesize "hello mars" --profile asha.json \
   the embedding never changes, so a shifted profile still matches the
   original speaker. `time_stretch` fits synthesised speech into a
   segment window for dub assembly.
+- **Voice library** (`VoiceLibrary`): keep a project's voices in one
+  JSON file. `video-dubber clone ref.wav --name Asha --out asha.json
+  --library voices.json` adds the new profile on the spot;
+  `video-dubber voices voices.json` lists the stored voices, and
+  `voices --add profile.json [--overwrite]` manages the file.
+  `VoiceLibrary.match(embedding)` identifies a speaker from a fresh
+  recording by cosine similarity — it returns `None` below the
+  threshold instead of mislabelling an unknown voice.
 - Try it without recordings: `python examples/demo_voice.py`.
+
+## Multi-speaker dubbing
+
+When a transcript's segments carry `speaker` labels, each speaker can
+have their own voice:
+
+```bash
+# One voice per speaker (paths resolve against the map's directory)
+video-dubber dub translated.json --profile narrator.json \
+  --profiles voices-map.json --out dubbed.wav \
+  --subtitles --report-out report.json
+```
+
+```json
+// voices-map.json — speaker name -> profile file
+{"Asha": "asha.json", "Ravi": "ravi.json"}
+```
+
+- A segment whose speaker is in the map is rendered in that voice;
+  unlabelled segments — or speakers with no profile — fall back to the
+  default `--profile` voice instead of failing the dub.
+- The quality report counts `speakers_dubbed` (distinct speaker labels).
+- `--subtitles` writes `dubbed.srt` + `dubbed.vtt` of the translated
+  transcript next to the dub WAV; batch jobs always write
+  `translated.srt` / `translated.vtt` too, and a batch job can carry a
+  `"profiles": {"Asha": "asha.json"}` key with the same meaning.
+- Try it without recordings: `python examples/demo_multispeaker.py`.
 
 ## Dub assembly
 
@@ -190,8 +226,8 @@ video-dubber batch manifest.json --out-dir out/
 ```
 
 - Each job writes to `out/<name>/` — `dubbed.wav`, `transcript.json`,
-  `translated.json`, `report.json`, and `dubbed.mp4` when a video was
-  muxed. A job is either a `video` (extract → transcribe → translate
+  `translated.json`, `translated.srt`, `translated.vtt`, `report.json`,
+  and `dubbed.mp4` when a video was muxed. A job is either a `video` (extract → transcribe → translate
   → dub) or a pre-made `transcript` (translate → dub). With
   `backend: scripted` a video job needs a `script` word list; otherwise
   it uses Whisper (`--model` via `model`, default `tiny`).
@@ -211,9 +247,10 @@ video-dubber batch manifest.json --out-dir out/
 Audio extraction + transcription are done (62 tests). Translation is done
 (94 tests). Voice cloning is done (126 tests). Dub assembly is done
 (147 tests). Batch mode + quality metrics are done (185 tests).
-Remaining: the self-review checklist and public flip — the project
-stays private per the 5–7 day pace rule (started 2026-11-08, earliest
-completion 2026-11-13).
+Multi-speaker dubbing, voice library and subtitle export are done
+(205 tests). Remaining: the self-review checklist and public flip — the
+project stays private per the 5–7 day pace rule (started 2026-11-08,
+earliest completion 2026-11-13).
 
 ## License
 

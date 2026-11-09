@@ -10,6 +10,7 @@ Subcommands (see ``video-dubber <cmd> --help`` for details):
 * ``translate`` — translate a transcript JSON file to another language
   (dictionary backend, or ``argos-translate`` when installed).
 * ``clone`` — build a speaker profile from reference WAV recordings.
+* ``voices`` — list the profiles in a voice library, or add one to it.
 * ``synthesize`` — render text as audio in a cloned voice (demo synthesis).
 * ``dub`` — render a full dubbed track from a translated transcript and
   a speaker profile, with a quality report (and optional video mux).
@@ -54,6 +55,7 @@ from video_dubber.voice import (
     ScriptedVoiceCloner,
     SpeakerProfile,
     VoiceCloneError,
+    VoiceLibrary,
     adjust_prosody,
 )
 
@@ -139,6 +141,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_clone.add_argument("--name", required=True, help="Speaker name for the profile.")
     p_clone.add_argument("--wpm", type=float, help="Speaking rate if known (default 150).")
     p_clone.add_argument("--out", required=True, help="Output profile JSON path.")
+    p_clone.add_argument(
+        "--library",
+        help="Voice library JSON to add this profile to (created if missing).",
+    )
+
+    p_voices = sub.add_parser("voices", help="List profiles in a voice library.")
+    p_voices.add_argument("library", help="Voice library JSON path.")
+    p_voices.add_argument("--add", help="Profile JSON to add to the library (then list).")
+    p_voices.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace an existing profile of the same name when using --add.",
+    )
 
     p_synth = sub.add_parser("synthesize", help="Render text in a cloned voice.")
     p_synth.add_argument("text", help="Text to speak.")
@@ -150,6 +165,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_dub = sub.add_parser("dub", help="Render a dubbed track from a translated transcript.")
     p_dub.add_argument("transcript", help="Translated transcript JSON file.")
     p_dub.add_argument("--profile", required=True, help="Speaker profile JSON path.")
+    p_dub.add_argument(
+        "--profiles",
+        help="JSON file mapping speaker names to profile JSON paths, for "
+        "multi-speaker transcripts (unlisted speakers use --profile).",
+    )
+    p_dub.add_argument(
+        "--subtitles",
+        action="store_true",
+        help="Also write <out-stem>.srt and <out-stem>.vtt of the translated transcript.",
+    )
     p_dub.add_argument("--original", help="Original audio WAV (for loudness matching).")
     p_dub.add_argument("--out", required=True, help="Output dubbed WAV path.")
     p_dub.add_argument("--video", help="Original video to mux the dub into.")
@@ -304,6 +329,43 @@ def _cmd_clone(args: argparse.Namespace) -> int:
         f"{profile.speaking_rate_wpm:.0f} wpm, {len(args.references)} reference(s)"
     )
     print(f"wrote {args.out}")
+    if args.library:
+        import os
+
+        library = (
+            VoiceLibrary.from_json_file(args.library)
+            if os.path.exists(args.library)
+            else VoiceLibrary()
+        )
+        library.add(profile, overwrite=True)
+        library.save(args.library)
+        print(f"added {profile.name} to library {args.library} ({len(library)} voices)")
+    return 0
+
+
+def _cmd_voices(args: argparse.Namespace) -> int:
+    import os
+
+    if not os.path.exists(args.library):
+        if args.add is None:
+            print(f"no voice library at {args.library} yet — clone a voice first")
+            return 0
+        library = VoiceLibrary()
+    else:
+        library = VoiceLibrary.from_json_file(args.library)
+    if args.add:
+        with open(args.add, encoding="utf-8") as fh:
+            profile = SpeakerProfile.from_json(fh.read())
+        library.add(profile, overwrite=args.overwrite)
+        library.save(args.library)
+        print(f"added {profile.name} to {args.library}")
+    if len(library) == 0:
+        print(f"{args.library}: no voices yet")
+        return 0
+    print(f"{args.library}: {len(library)} voice(s)")
+    for name in library.names():
+        profile = library.get(name)
+        print(f"  {name}: {profile.base_pitch_hz:.0f} Hz, {profile.speaking_rate_wpm:.0f} wpm")
     return 0
 
 
@@ -321,6 +383,39 @@ def _cmd_synthesize(args: argparse.Namespace) -> int:
     return 0
 
 
+def _load_profiles_map(path: str) -> dict[str, SpeakerProfile]:
+    """Load a speaker-name -> profile-file JSON map into real profiles."""
+    import json
+    import os
+
+    try:
+        with open(path, encoding="utf-8") as fh:
+            raw = json.load(fh)
+    except OSError as exc:
+        raise VoiceCloneError(f"cannot read profiles map {path!r}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise VoiceCloneError(f"profiles map {path!r} is not valid JSON: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise VoiceCloneError(f"profiles map {path!r} must be a JSON object")
+    profiles: dict[str, SpeakerProfile] = {}
+    for speaker, profile_path in raw.items():
+        if not isinstance(profile_path, str):
+            raise VoiceCloneError(
+                f"profiles map {path!r}: path for speaker {speaker!r} is not a string"
+            )
+        resolved = profile_path
+        if not os.path.isabs(resolved):
+            resolved = os.path.join(os.path.dirname(os.path.abspath(path)), resolved)
+        try:
+            with open(resolved, encoding="utf-8") as fh:
+                profiles[speaker] = SpeakerProfile.from_json(fh.read())
+        except OSError as exc:
+            raise VoiceCloneError(
+                f"cannot read profile for speaker {speaker!r} ({resolved}): {exc}"
+            ) from exc
+    return profiles
+
+
 def _cmd_dub(args: argparse.Namespace) -> int:
     if args.video and not args.mux_out:
         print("error: --video needs --mux-out", file=sys.stderr)
@@ -329,13 +424,14 @@ def _cmd_dub(args: argparse.Namespace) -> int:
         transcript = Transcript.from_json(fh.read())
     with open(args.profile, encoding="utf-8") as fh:
         profile = SpeakerProfile.from_json(fh.read())
+    profiles = _load_profiles_map(args.profiles) if args.profiles else None
     original = resample(load_wav(args.original), DEFAULT_SAMPLE_RATE) if args.original else None
     reference = None
     if args.reference:
         with open(args.reference, encoding="utf-8") as fh:
             reference = Transcript.from_json(fh.read())
     dub_audio, fit_factors, placed = dub_transcript(
-        transcript, ScriptedVoiceCloner(), profile, original
+        transcript, ScriptedVoiceCloner(), profile, original, profiles=profiles
     )
     save_wav(args.out, dub_audio)
     report = build_report(
@@ -354,6 +450,17 @@ def _cmd_dub(args: argparse.Namespace) -> int:
         with open(args.report_out, "w", encoding="utf-8") as fh:
             fh.write(text)
         print(f"wrote {args.report_out}")
+    if report.speakers_dubbed:
+        print(f"speakers dubbed: {report.speakers_dubbed}")
+    if args.subtitles:
+        import os
+
+        stem, _ = os.path.splitext(args.out)
+        for ext, text in (("srt", transcript.to_srt()), ("vtt", transcript.to_vtt())):
+            path = f"{stem}.{ext}"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            print(f"wrote {path}")
     if args.video:
         mux_audio(args.video, args.out, args.mux_out)
         print(f"muxed dub into {args.mux_out}")
@@ -401,6 +508,8 @@ def main(argv=None) -> int:
             return _cmd_translate(args)
         if args.command == "clone":
             return _cmd_clone(args)
+        if args.command == "voices":
+            return _cmd_voices(args)
         if args.command == "synthesize":
             return _cmd_synthesize(args)
         if args.command == "dub":
