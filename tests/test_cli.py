@@ -276,6 +276,40 @@ def test_cli_translate_round_trip_reports_fidelity(tmp_path, capsys):
     assert report["segments"][0]["back_text"] == "hello world"
 
 
+def test_cli_config_shows_defaults(tmp_path, capsys, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert main(["config"]) == 0
+    out = capsys.readouterr().out
+    assert '"target_language": null' in out
+    assert '"backend": "dictionary"' in out
+    assert "no config file found" in out
+
+
+def test_cli_config_loads_file(tmp_path, capsys):
+    config_path = tmp_path / "dubber.toml"
+    config_path.write_text('[dubber]\ntarget_language = "hi"\nbed_level = 0.3\n', encoding="utf-8")
+    assert main(["--config", str(config_path), "config"]) == 0
+    out = capsys.readouterr().out
+    assert '"target_language": "hi"' in out
+    assert '"bed_level": 0.3' in out
+    assert f"loaded from {config_path}" in out
+
+
+def test_cli_config_toml_format(tmp_path, capsys):
+    config_path = tmp_path / "dubber.toml"
+    config_path.write_text('[dubber]\ntarget_language = "es"\n', encoding="utf-8")
+    assert main(["--config", str(config_path), "config", "--format", "toml"]) == 0
+    out = capsys.readouterr().out
+    assert 'target_language = "es"' in out
+    assert "[dubber.enhance]" in out
+    assert "target = -16.0" in out
+
+
+def test_cli_config_missing_file_errors(tmp_path, capsys):
+    assert main(["--config", str(tmp_path / "nope.toml"), "config"]) == 2
+    assert "not found" in capsys.readouterr().err
+
+
 def test_cli_translate_srt_with_chunking(tmp_path):
     transcript = tmp_path / "en.json"
     _write_transcript(transcript)

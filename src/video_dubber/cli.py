@@ -19,6 +19,7 @@ Subcommands (see ``video-dubber <cmd> --help`` for details):
 * ``enhance`` — clean up a WAV: trim silence, cut hum, gate room noise,
   normalize loudness to a target RMS.
 * ``batch`` — dub many videos/transcripts from one manifest JSON file.
+* ``config`` — show the effective configuration (dubber.toml defaults).
 """
 
 import argparse
@@ -38,6 +39,7 @@ from video_dubber.batch import (
     run_batch,
     summarize,
 )
+from video_dubber.config import ConfigError, DubberConfig, load_config
 from video_dubber.diarize import (
     DEFAULT_THRESHOLD,
     DiarizeError,
@@ -83,6 +85,11 @@ def build_parser() -> argparse.ArgumentParser:
         description="Multilingual video dubbing with voice cloning.",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument(
+        "--config",
+        help="Config file (dubber.toml) to load; default search: ./dubber.toml, "
+        "~/.config/video-dubber/dubber.toml.",
+    )
     sub = parser.add_subparsers(dest="command")
 
     p_extract = sub.add_parser("extract", help="Extract audio from a video to WAV.")
@@ -311,7 +318,64 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Stop the batch after the first failed job.",
     )
+
+    p_config = sub.add_parser("config", help="Show the effective configuration.")
+    p_config.add_argument(
+        "--format",
+        choices=["json", "toml"],
+        default="json",
+        help="Output format (default json).",
+    )
     return parser
+
+
+def _load_config(args: argparse.Namespace) -> DubberConfig | None:
+    """Load the config file for this invocation, or None on error.
+
+    A bad config file is a hard error (exit 2), never a silent
+    fall-back to defaults — a typo in dubber.toml should not quietly
+    change the dub. No file found anywhere just means defaults.
+    """
+    try:
+        return load_config(getattr(args, "config", None))
+    except ConfigError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return None
+
+
+def _cmd_config(args: argparse.Namespace) -> int:
+    config = _load_config(args)
+    if config is None:
+        return 2
+    if args.format == "toml":
+        print(_config_to_toml(config))
+    else:
+        import json
+
+        print(json.dumps(config.to_dict(), indent=2))
+    if config.path is not None:
+        print(f"(loaded from {config.path})")
+    else:
+        print("(no config file found; showing defaults)")
+    return 0
+
+
+def _config_to_toml(config: DubberConfig) -> str:
+    """Render the effective config as TOML (stdlib has no TOML writer)."""
+    import json
+
+    lines = ["[dubber]"]
+    for key in ("target_language", "source_language", "backend", "voice_library"):
+        value = getattr(config, key)
+        if value is not None:
+            lines.append(f"{key} = {json.dumps(value)}")
+    if config.bed_level is not None:
+        lines.append(f"bed_level = {config.bed_level}")
+    lines.append("")
+    lines.append("[dubber.enhance]")
+    for key in ("target", "ceiling", "high_pass", "gate"):
+        lines.append(f"{key} = {getattr(config.enhance, key)}")
+    return "\n".join(lines)
 
 
 def _cmd_extract(args: argparse.Namespace) -> int:
@@ -735,6 +799,8 @@ def main(argv=None) -> int:
             return _cmd_enhance(args)
         if args.command == "batch":
             return _cmd_batch(args)
+        if args.command == "config":
+            return _cmd_config(args)
     except (
         AssemblyError,
         BatchError,
