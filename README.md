@@ -16,6 +16,7 @@ keeping the speaker's voice.
 - [x] Background-music bed (extract, duck, mix under the dub)
 - [x] Speaker diarization (label who speaks, from the voice library)
 - [x] Audio enhancement (loudness normalize, hum cut, noise gate, silence trim)
+- [x] Translation fidelity (round-trip back-translation check, flags unstable segments)
 - [ ] Self-review checklist, then public
 
 ## Quick start
@@ -103,7 +104,17 @@ video-dubber translate transcript.json --target hi \
   ends exactly where the source did. `--max-chars` splits long translated
   segments into subtitle-sized cues at word boundaries, preferring breaks
   after sentence punctuation.
-- Try it without a model: `python examples/demo_translate.py`.
+- **Fidelity check** (`--round-trip`): after translating, each segment is
+  translated back to the source language and compared with the original
+  (word-level Jaccard, threshold 0.6). Segments that come back mangled
+  are flagged in a JSON/Markdown report (`--fidelity-out`) so a human
+  can fix them before the dub is rendered. A perfect score means the
+  translation is *stable*, not that it is correct — unknown words pass
+  through untouched both ways. The check also caught a real bug: the
+  dictionary tokenizer shattered Devanagari words at combining marks,
+  so Hindi back-translation silently returned the input unchanged.
+- Try it without a model: `python examples/demo_translate.py`, and
+  `python examples/demo_fidelity.py` for the round-trip check.
 
 ## Voice cloning
 
