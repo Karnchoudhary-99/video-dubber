@@ -389,6 +389,8 @@ video-dubber dub translated.json --profile asha.json --out dubbed.wav \
   text, never as markup.
 - Demo: `python examples/demo_report.py` — the slow second segment flips
   the verdict to `review` with exactly one flagged row.
+- A report saved as JSON can be re-rendered later without re-dubbing:
+  `video-dubber report report.json --out report.html` (or `--format md`).
 
 ## Status
 
@@ -407,11 +409,12 @@ reports, and a grapheme-aware dictionary tokenizer (the check caught
 the old `\w` tokenizer shattering Devanagari words at combining marks).
 Project config file is done (315 tests): `dubber.toml` defaults for
 translate/dub/enhance/diarize/clone, a `config` subcommand, and an
-example file. HTML quality reports are done (326 tests): a self-contained
+example file. HTML quality reports are done (334 tests): a self-contained
 `report.py` renderer with a verdict banner, MOS proxy bar and a
 per-segment table flagging drift over 0.10s or fits outside 0.8–1.25,
 `dub --report-format html`, `batch-report.html`, and an end-to-end demo
-run in CI. Remaining: the self-review checklist and public flip — the
+run in CI. Saved JSON reports round-trip through `DubReport.from_json`
+and can be re-rendered without re-dubbing via the `report` subcommand. Remaining: the self-review checklist and public flip — the
 project stays private per the 5–7 day pace rule (started 2026-11-08,
 earliest completion 2026-11-13).
 
