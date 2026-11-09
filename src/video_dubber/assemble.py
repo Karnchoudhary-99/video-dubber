@@ -14,7 +14,11 @@ The assembly pipeline for one translated transcript:
 4. **Place** the segments on a silence bed at their original start times
    (:func:`assemble_dub`) and, when a video is given, **mux** the new
    audio track back in with ffmpeg (:func:`mux_audio`).
-5. **Report** (:func:`build_report`): sync drift, fit factors, loudness
+5. **Bed (optional)**: with ``bed_level`` set, the original's non-speech
+   audio (music, ambience) is extracted, ducked under the dubbed speech
+   and mixed back in (:mod:`video_dubber.bed`) — a dub over a music bed
+   instead of dead silence between lines.
+6. **Report** (:func:`build_report`): sync drift, fit factors, loudness
    error, translation coverage, WER against a same-language reference,
    and a heuristic MOS proxy — the numbers a reviewer checks before
    the dub ships.
@@ -27,6 +31,7 @@ import math
 from dataclasses import dataclass
 
 from video_dubber.audio import AudioData
+from video_dubber.bed import duck_bed, extract_bed, mix_bed
 from video_dubber.extract import ExtractionError, _run
 from video_dubber.quality import mos_proxy as _mos_proxy
 from video_dubber.quality import wer_from_transcripts
@@ -135,6 +140,8 @@ def dub_transcript(
     profile: SpeakerProfile,
     original: AudioData | None = None,
     profiles: dict[str, SpeakerProfile] | None = None,
+    bed_level: float | None = None,
+    duck_level: float = 0.15,
 ) -> tuple[AudioData, list[float], list[tuple[float, float]]]:
     """Render a full dubbed track for a translated transcript.
 
@@ -151,6 +158,13 @@ def dub_transcript(
     any other segment — unlabelled, or labelled with a speaker that has
     no profile — falls back to ``profile`` (the default voice) rather
     than failing the dub.
+
+    With ``bed_level`` set (0–1), the original's non-speech audio is
+    kept as a music bed: extracted from ``original``, ducked to
+    ``duck_level`` under the dubbed speech, and mixed under the dub at
+    ``bed_level`` gain. Needs ``original`` — without it there is no bed
+    to extract, so :class:`AssemblyError` is raised. An out-of-range
+    level raises :class:`~video_dubber.bed.BedError`.
     """
     if not transcript.segments:
         raise AssemblyError("cannot dub an empty transcript")
@@ -172,7 +186,14 @@ def dub_transcript(
             fitted = loudness_match(fitted, original)
         placed.append((segment.start, fitted))
     placed_info = [(start, clip.duration) for start, clip in placed]
-    return assemble_dub(placed, total), fit_factors, placed_info
+    dub_audio = assemble_dub(placed, total)
+    if bed_level is not None:
+        if original is None:
+            raise AssemblyError("bed_level needs the original audio to extract the bed from")
+        speech = [(s.start, s.end) for s in transcript.segments if s.words]
+        bed = duck_bed(extract_bed(original, speech), placed_info, duck_level)
+        dub_audio = mix_bed(dub_audio, bed, bed_level)
+    return dub_audio, fit_factors, placed_info
 
 
 def mux_audio(video_path: str, audio_path: str, out_path: str) -> str:
