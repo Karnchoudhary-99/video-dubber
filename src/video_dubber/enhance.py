@@ -250,3 +250,73 @@ def trim_silence(
     hi = min(len(audio.samples), last + margin)
     trimmed = audio.duration - (hi - lo) / sr
     return AudioData(audio.samples[lo:hi], sr), max(0.0, trimmed)
+
+
+@dataclass
+class EnhancementReport:
+    """Before/after numbers for one :func:`enhance_audio` run."""
+
+    before: LoudnessStats
+    after: LoudnessStats
+    gain_db: float
+    trimmed_s: float
+    high_pass_hz: float
+    gate_threshold_dbfs: float
+
+    def to_dict(self) -> dict:
+        return {
+            "before": self.before.to_dict(),
+            "after": self.after.to_dict(),
+            "gain_db": self.gain_db,
+            "trimmed_s": self.trimmed_s,
+            "high_pass_hz": self.high_pass_hz,
+            "gate_threshold_dbfs": self.gate_threshold_dbfs,
+        }
+
+    def to_markdown(self) -> str:
+        lines = [
+            "# Audio enhancement report",
+            "",
+            f"- RMS: {self.before.rms_dbfs:.1f} dBFS -> {self.after.rms_dbfs:.1f} dBFS",
+            f"- Peak: {self.before.peak_dbfs:.1f} dBFS -> {self.after.peak_dbfs:.1f} dBFS",
+            f"- Gain applied: {self.gain_db:+.1f} dB",
+            f"- Silence trimmed: {self.trimmed_s:.2f} s",
+            f"- High-pass: {self.high_pass_hz:.0f} Hz, gate: {self.gate_threshold_dbfs:.0f} dBFS",
+        ]
+        return "\n".join(lines) + "\n"
+
+
+def enhance_audio(
+    audio: AudioData,
+    target_dbfs: float = DEFAULT_TARGET_DBFS,
+    ceiling_dbfs: float = DEFAULT_CEILING_DBFS,
+    high_pass_hz: float = DEFAULT_HIGH_PASS_HZ,
+    gate_threshold_dbfs: float = DEFAULT_GATE_THRESHOLD_DBFS,
+    trim: bool = True,
+) -> tuple[AudioData, EnhancementReport]:
+    """Run the full enhancement chain: trim -> high-pass -> gate -> normalize.
+
+    Returns ``(audio, report)``. ``trim=False`` keeps the duration
+    untouched — use that when the audio sits on a timed bed (e.g. a
+    dub track whose segments must stay at their original start times),
+    where trimming would shift everything after the first word.
+    """
+    before = measure_loudness(audio)
+    trimmed_s = 0.0
+    work = audio
+    if trim:
+        work, trimmed_s = trim_silence(work)
+    if high_pass_hz > 0.0:
+        work = high_pass(work, high_pass_hz)
+    work = noise_gate(work, gate_threshold_dbfs)
+    work, gain_db = normalize_loudness(work, target_dbfs, ceiling_dbfs)
+    after = measure_loudness(work)
+    report = EnhancementReport(
+        before=before,
+        after=after,
+        gain_db=gain_db,
+        trimmed_s=trimmed_s,
+        high_pass_hz=high_pass_hz,
+        gate_threshold_dbfs=gate_threshold_dbfs,
+    )
+    return work, report
