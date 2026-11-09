@@ -176,9 +176,11 @@ class FidelityReport:
             "# Translation fidelity report",
             "",
             f"- Direction: {self.source} -> {self.target} (via {self.backend})",
-            f"- Verdict: **{self.verdict}** "
-            f"(mean {self.mean_score:.2f}, min {self.min_score:.2f}, "
-            f"threshold {self.threshold:.2f})",
+            (
+                f"- Verdict: **{self.verdict}** "
+                f"(mean {self.mean_score:.2f}, min {self.min_score:.2f}, "
+                f"threshold {self.threshold:.2f})"
+            ),
             f"- Flagged segments: {len(self.flagged)} of {len(self.segments)}",
             "",
         ]
@@ -228,9 +230,7 @@ def check_fidelity(
         )
     src = source or source_transcript.language or "en"
     back = reverse_translator(translator)
-    report = FidelityReport(
-        source=src, target=target, backend=translator.name, threshold=threshold
-    )
+    report = FidelityReport(source=src, target=target, backend=translator.name, threshold=threshold)
     for index, (original, translated) in enumerate(
         zip(source_transcript.segments, translated_transcript.segments)
     ):

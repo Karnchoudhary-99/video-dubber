@@ -161,6 +161,7 @@ _BUILTIN: dict[tuple[str, str], dict[str, str]] = {
     ("en", "es"): _EN_ES,
 }
 
+
 def _is_word_char(ch: str) -> bool:
     """A character that belongs inside a word: letter, mark, number, ``_``.
 
@@ -197,11 +198,7 @@ def _tokenize(text: str) -> list[tuple[str, int, int]]:
                 nxt = text[end]
                 if _is_word_char(nxt):
                     end += 1
-                elif (
-                    nxt == "'"
-                    and end + 1 < size
-                    and _is_word_char(text[end + 1])
-                ):
+                elif nxt == "'" and end + 1 < size and _is_word_char(text[end + 1]):
                     end += 2
                     while end < size and _is_word_char(text[end]):
                         end += 1
@@ -209,11 +206,7 @@ def _tokenize(text: str) -> list[tuple[str, int, int]]:
                     break
         else:
             end = index + 1
-            while (
-                end < size
-                and not text[end].isspace()
-                and not _is_word_char(text[end])
-            ):
+            while end < size and not text[end].isspace() and not _is_word_char(text[end]):
                 end += 1
         tokens.append((text[index:end], index, end))
         index = end
@@ -235,9 +228,7 @@ def _find_phrase_spans(
     Returns ``(start, end, replacement)`` spans into ``text``.
     """
     words = [
-        (token, start, end)
-        for token, start, end in tokens
-        if any(ch.isalnum() for ch in token)
+        (token, start, end) for token, start, end in tokens if any(ch.isalnum() for ch in token)
     ]
     claimed: list[tuple[int, int]] = []
     spans: list[tuple[int, int, str]] = []
@@ -250,10 +241,7 @@ def _find_phrase_spans(
                 continue
             start, end = run[0][1], run[-1][2]
             # Only whitespace may sit between the phrase's words.
-            if any(
-                not text[run[i][2] : run[i + 1][1]].isspace()
-                for i in range(width - 1)
-            ):
+            if any(not text[run[i][2] : run[i + 1][1]].isspace() for i in range(width - 1)):
                 continue
             if any(start < taken_end and taken_start < end for taken_start, taken_end in claimed):
                 continue
@@ -320,9 +308,7 @@ class DictionaryTranslator:
         exactly what the fidelity check is meant to surface.
         """
         inverted = {target: source for source, target in self.dictionary.items()}
-        return DictionaryTranslator(
-            source=self.target, target=self.source, dictionary=inverted
-        )
+        return DictionaryTranslator(source=self.target, target=self.source, dictionary=inverted)
 
     def supported(self, source: str, target: str) -> bool:
         return (source, target) in _BUILTIN or (
@@ -357,9 +343,7 @@ class DictionaryTranslator:
             # (e.g. a glossary term applied before this call) or numbers —
             # they are not untranslated source words and do not count.
             # (Skipped only for ASCII-scripted sources; see __post_init__.)
-            if self._source_is_ascii and not any(
-                "a" <= ch.lower() <= "z" for ch in token
-            ):
+            if self._source_is_ascii and not any("a" <= ch.lower() <= "z" for ch in token):
                 continue
             total += 1
             covered = any(s <= start and end <= e for s, e, _ in phrase_spans)

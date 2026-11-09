@@ -51,6 +51,7 @@ from video_dubber.enhance import (
     enhance_audio,
 )
 from video_dubber.extract import ExtractionError, extract_audio
+from video_dubber.fidelity import FidelityError, check_fidelity
 from video_dubber.transcribe import (
     ScriptedTranscriber,
     TranscriptionError,
@@ -143,6 +144,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-chars",
         type=int,
         help="Split long translated segments into cues of at most this many chars.",
+    )
+    p_translate.add_argument(
+        "--round-trip",
+        action="store_true",
+        help="After translating, back-translate each segment and report "
+        "round-trip fidelity (flags segments that came back mangled).",
+    )
+    p_translate.add_argument(
+        "--fidelity-out",
+        help="Write the fidelity report here (needs --round-trip).",
+    )
+    p_translate.add_argument(
+        "--fidelity-format",
+        choices=["json", "md"],
+        default="json",
+        help="Fidelity report format (default json).",
     )
     p_translate.add_argument("--out", help="Write transcript to this file.")
     p_translate.add_argument(
@@ -390,6 +407,30 @@ def _cmd_translate(args: argparse.Namespace) -> int:
         if translator.last_unknown:
             stats += f" (untranslated: {', '.join(translator.last_unknown[:5])})"
     print(stats)
+    if args.round_trip:
+        try:
+            report = check_fidelity(
+                transcript, translated, translator, target=args.target, source=source
+            )
+        except FidelityError as exc:
+            print(f"error: fidelity check failed: {exc}", file=sys.stderr)
+            return 2
+        print(
+            f"fidelity: verdict {report.verdict} "
+            f"(mean {report.mean_score:.2f}, min {report.min_score:.2f}, "
+            f"{len(report.flagged)} of {len(report.segments)} segments flagged)"
+        )
+        for segment in report.flagged:
+            print(
+                f"  segment {segment.index} (score {segment.score:.2f}): "
+                f"“{segment.source_text}” -> back “{segment.back_text}”",
+                file=sys.stderr,
+            )
+        if args.fidelity_out:
+            text = {"json": report.to_json(), "md": report.to_markdown()}[args.fidelity_format]
+            with open(args.fidelity_out, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            print(f"wrote {args.fidelity_out}")
     if args.out:
         text = {
             "json": translated.to_json(),
