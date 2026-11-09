@@ -255,6 +255,7 @@ class DubReport:
     translation_coverage: float | None  # dictionary coverage, None if unknown
     word_error_rate: float | None = None  # vs a same-language reference, None if not given
     speakers_dubbed: int = 0  # distinct speaker labels in the dubbed segments
+    bed_level: float | None = None  # music-bed mix level, None when no bed was kept
     mos_proxy: float = 5.0  # heuristic 1-5 quality score, NOT a listening test
     verdict: str = "good"  # "good" | "review" — review when drift/fit/loudness/WER is off
 
@@ -277,6 +278,7 @@ class DubReport:
                     None if self.word_error_rate is None else round(self.word_error_rate, 3)
                 ),
                 "speakers_dubbed": self.speakers_dubbed,
+                "bed_level": self.bed_level,
                 "mos_proxy": self.mos_proxy,
                 "verdict": self.verdict,
             },
@@ -303,6 +305,8 @@ class DubReport:
             lines.append(f"- Word error rate vs reference: {self.word_error_rate:.3f}")
         if self.speakers_dubbed:
             lines.append(f"- Speakers dubbed: {self.speakers_dubbed}")
+        if self.bed_level is not None:
+            lines.append(f"- Background bed level: {self.bed_level:.2f}")
         lines.append(f"- MOS proxy (heuristic, 1-5): {self.mos_proxy:.2f}")
         lines.append(f"- Verdict: **{self.verdict}**")
         return "\n".join(lines) + "\n"
@@ -316,6 +320,7 @@ def build_report(
     original: AudioData | None = None,
     translation_coverage: float | None = None,
     reference_transcript: Transcript | None = None,
+    bed_level: float | None = None,
 ) -> DubReport:
     """Score a dub from the placed clips and the fit factors.
 
@@ -366,6 +371,7 @@ def build_report(
         translation_coverage=translation_coverage,
         word_error_rate=wer,
         speakers_dubbed=len({s.speaker for s in timed if s.speaker is not None}),
+        bed_level=bed_level,
         mos_proxy=_mos_proxy(
             mean_drift,
             max_drift,

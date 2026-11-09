@@ -276,6 +276,17 @@ class TestBuildReport:
         assert report.loudness_error_db is not None
         assert abs(report.loudness_error_db) < 3.0
 
+    def test_bed_level_reported_when_a_bed_was_kept(self):
+        transcript = Transcript(segments=[Segment(words=_words(["hello"], 0.0))], language="hi")
+        dub, factors, placed = dub_transcript(transcript, ScriptedVoiceCloner(), _profile())
+        plain = build_report(transcript, placed, factors, dub)
+        assert plain.bed_level is None
+        assert "bed_level" not in plain.to_markdown()
+        with_bed = build_report(transcript, placed, factors, dub, bed_level=0.3)
+        assert with_bed.bed_level == 0.3
+        assert json.loads(with_bed.to_json())["bed_level"] == 0.3
+        assert "Background bed level: 0.30" in with_bed.to_markdown()
+
 
 class _RecordingCloner:
     """VoiceCloner double that records which profile each segment used."""
