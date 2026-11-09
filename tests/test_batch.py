@@ -323,6 +323,32 @@ def test_job_rejects_non_dict_profiles():
         BatchJob(name="x", target="hi", profile="p.json", transcript="t.json", profiles=["a"])
 
 
+def test_manifest_accepts_bed_level_and_defaults(tmp_path):
+    manifest = _manifest(tmp_path, [_job("clip1", bed_level=0.3)])
+    assert manifest.jobs[0].bed_level == 0.3
+    manifest = _manifest(tmp_path, [_job("clip1")], defaults={"bed_level": 0.25})
+    assert manifest.jobs[0].bed_level == 0.25
+
+
+def test_job_rejects_bad_bed_level():
+    for level in (1.5, -0.1):
+        with pytest.raises(BatchError, match="'bed_level' must be between 0 and 1"):
+            BatchJob(
+                name="x",
+                target="hi",
+                profile="p.json",
+                video="v.mp4",
+                backend="scripted",
+                script="w.json",
+                bed_level=level,
+            )
+
+
+def test_job_rejects_bed_level_without_video():
+    with pytest.raises(BatchError, match="'bed_level' needs a video job"):
+        BatchJob(name="x", target="hi", profile="p.json", transcript="t.json", bed_level=0.3)
+
+
 def test_run_job_writes_translated_subtitles(tmp_path):
     from video_dubber.batch import run_job
 
