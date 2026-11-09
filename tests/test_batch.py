@@ -163,6 +163,29 @@ def test_run_job_transcript_job_produces_dub_and_report(tmp_path):
     assert "नमस्ते" in json.dumps(translated, ensure_ascii=False)
 
 
+def test_run_job_enhance_flag_lands_in_report(tmp_path):
+    from video_dubber.batch import run_job
+
+    transcript = _transcript_file(tmp_path, "src.json", "hello mars good morning")
+    job = BatchJob(
+        name="clip1",
+        target="hi",
+        profile=_profile_file(tmp_path),
+        transcript=transcript,
+        enhance=True,
+    )
+    result = run_job(job, str(tmp_path / "out"))
+    assert result.status == "ok"
+    with open(result.outputs["report"], encoding="utf-8") as fh:
+        report = json.loads(fh.read())
+    assert report["enhancement"] is not None
+    assert report["enhancement"]["gain_db"] != pytest.approx(0.0)
+    # Timing preserved: the dub still spans the full transcript.
+    from video_dubber.audio import load_wav
+
+    assert load_wav(result.outputs["dubbed_wav"]).duration == pytest.approx(1.6)
+
+
 def test_run_job_wer_against_reference(tmp_path):
     from video_dubber.batch import run_job
 

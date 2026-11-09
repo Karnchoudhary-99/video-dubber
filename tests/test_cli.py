@@ -482,6 +482,56 @@ def test_cli_dub_with_bed_level(tmp_path, capsys):
     assert load_wav(str(out)).samples[int(1.5 * 16_000)] != pytest.approx(0.0)
 
 
+def test_cli_enhance_trims_and_normalizes(tmp_path, capsys):
+    from video_dubber.enhance import measure_loudness
+
+    src = tmp_path / "raw.wav"
+    save_wav(str(src), concat(make_silence(0.3), make_sine(440.0, 0.5, amplitude=0.05), make_silence(0.3)))
+    out = tmp_path / "clean.wav"
+    report = tmp_path / "enhance.md"
+    assert main(["enhance", str(src), "--out", str(out), "--report-out", str(report)]) == 0
+    cleaned = load_wav(str(out))
+    assert cleaned.duration == pytest.approx(0.6, abs=0.02)  # speech + margins
+    assert measure_loudness(cleaned).rms_dbfs == pytest.approx(-16.0, abs=0.5)
+    text = report.read_text(encoding="utf-8")
+    assert "RMS:" in text and "-16.0 dBFS" in text
+    assert "wrote" in capsys.readouterr().out
+
+
+def test_cli_dub_with_enhance_keeps_timing(tmp_path, capsys):
+    transcript = tmp_path / "hi.json"
+    _write_dub_transcript(transcript)
+    profile = tmp_path / "dub.json"
+    _write_dub_profile(profile)
+    out = tmp_path / "dub.wav"
+    report = tmp_path / "report.json"
+    assert (
+        main(
+            [
+                "dub",
+                str(transcript),
+                "--profile",
+                str(profile),
+                "--out",
+                str(out),
+                "--enhance",
+                "--report-out",
+                str(report),
+                "--report-format",
+                "json",
+            ]
+        )
+        == 0
+    )
+    out_text = capsys.readouterr().out
+    assert "enhanced: RMS" in out_text
+    # Timing preserved: the dub still spans the full 2.5 s transcript.
+    assert load_wav(str(out)).duration == pytest.approx(2.5)
+    data = json.loads(report.read_text(encoding="utf-8"))
+    assert data["enhancement"] is not None
+    assert data["enhancement"]["gain_db"] != pytest.approx(0.0)
+
+
 def test_cli_dub_bed_level_without_original_fails(tmp_path, capsys):
     transcript = tmp_path / "hi.json"
     _write_dub_transcript(transcript)
