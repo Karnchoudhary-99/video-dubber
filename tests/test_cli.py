@@ -310,6 +310,125 @@ def test_cli_config_missing_file_errors(tmp_path, capsys):
     assert "not found" in capsys.readouterr().err
 
 
+def test_cli_translate_target_from_config(tmp_path, capsys):
+    transcript = tmp_path / "en.json"
+    _write_transcript(transcript)
+    config_path = tmp_path / "dubber.toml"
+    config_path.write_text('[dubber]\ntarget_language = "hi"\n', encoding="utf-8")
+    out = tmp_path / "hi.json"
+    assert (
+        main(["--config", str(config_path), "translate", str(transcript), "--out", str(out)]) == 0
+    )
+    assert Transcript.from_json(out.read_text(encoding="utf-8")).language == "hi"
+
+
+def test_cli_translate_flag_beats_config(tmp_path, capsys):
+    transcript = tmp_path / "en.json"
+    _write_transcript(transcript)
+    config_path = tmp_path / "dubber.toml"
+    config_path.write_text('[dubber]\ntarget_language = "es"\n', encoding="utf-8")
+    out = tmp_path / "out.json"
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "translate",
+                str(transcript),
+                "--target",
+                "hi",
+                "--out",
+                str(out),
+            ]
+        )
+        == 0
+    )
+    assert Transcript.from_json(out.read_text(encoding="utf-8")).language == "hi"
+
+
+def test_cli_translate_no_target_anywhere_errors(tmp_path, capsys, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    transcript = tmp_path / "en.json"
+    _write_transcript(transcript)
+    assert main(["translate", str(transcript)]) == 2
+    assert "needs --target" in capsys.readouterr().err
+
+
+def test_cli_enhance_target_from_config(tmp_path):
+    from video_dubber.enhance import measure_loudness
+
+    src = tmp_path / "in.wav"
+    save_wav(str(src), make_sine(440.0, 1.0, amplitude=0.5))
+    config_path = tmp_path / "dubber.toml"
+    config_path.write_text("[dubber.enhance]\ntarget = -30.0\n", encoding="utf-8")
+    out = tmp_path / "out.wav"
+    assert main(["--config", str(config_path), "enhance", str(src), "--out", str(out)]) == 0
+    assert measure_loudness(load_wav(str(out))).rms_dbfs == pytest.approx(-30.0, abs=1.0)
+
+
+def test_cli_enhance_flag_beats_config(tmp_path):
+    from video_dubber.enhance import measure_loudness
+
+    src = tmp_path / "in.wav"
+    save_wav(str(src), make_sine(440.0, 1.0, amplitude=0.5))
+    config_path = tmp_path / "dubber.toml"
+    config_path.write_text("[dubber.enhance]\ntarget = -30.0\n", encoding="utf-8")
+    out = tmp_path / "out.wav"
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "enhance",
+                str(src),
+                "--out",
+                str(out),
+                "--target",
+                "-10",
+            ]
+        )
+        == 0
+    )
+    assert measure_loudness(load_wav(str(out))).rms_dbfs == pytest.approx(-10.0, abs=1.0)
+
+
+def test_cli_dub_bed_level_from_config(tmp_path, capsys):
+    transcript = tmp_path / "hi.json"
+    _write_dub_transcript(transcript)
+    profile = tmp_path / "dub.json"
+    _write_dub_profile(profile)
+    original = tmp_path / "orig.wav"
+    save_wav(str(original), make_sine(97.3, 2.5, amplitude=0.5))
+    config_path = tmp_path / "dubber.toml"
+    config_path.write_text("[dubber]\nbed_level = 0.3\n", encoding="utf-8")
+    out = tmp_path / "dub.wav"
+    report = tmp_path / "report.json"
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "dub",
+                str(transcript),
+                "--profile",
+                str(profile),
+                "--original",
+                str(original),
+                "--out",
+                str(out),
+                "--report-out",
+                str(report),
+                "--report-format",
+                "json",
+            ]
+        )
+        == 0
+    )
+    assert "background bed level: 0.30" in capsys.readouterr().out
+    data = json.loads(report.read_text(encoding="utf-8"))
+    assert data["bed_level"] == pytest.approx(0.3)
+
+
 def test_cli_translate_srt_with_chunking(tmp_path):
     transcript = tmp_path / "en.json"
     _write_transcript(transcript)
@@ -1018,6 +1137,37 @@ def test_cli_diarize_keeps_existing_label_without_overwrite(tmp_path, capsys):
     )
     labelled = Transcript.from_json(out.read_text(encoding="utf-8"))
     assert labelled.segments[0].speaker == "Asha"
+
+
+def test_cli_diarize_library_from_config(tmp_path, capsys):
+    audio, transcript_path, library_path = _make_diarize_fixtures(tmp_path)
+    config_path = tmp_path / "dubber.toml"
+    config_path.write_text(f'[dubber]\nvoice_library = "{library_path}"\n', encoding="utf-8")
+    out = tmp_path / "labelled.json"
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "diarize",
+                str(transcript_path),
+                "--audio",
+                str(audio),
+                "--out",
+                str(out),
+            ]
+        )
+        == 0
+    )
+    labelled = Transcript.from_json(out.read_text(encoding="utf-8"))
+    assert [s.speaker for s in labelled.segments] == ["Asha", "Ravi"]
+
+
+def test_cli_diarize_no_library_anywhere_errors(tmp_path, capsys, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    audio, transcript_path, _ = _make_diarize_fixtures(tmp_path)
+    assert main(["diarize", str(transcript_path), "--audio", str(audio)]) == 2
+    assert "needs --library" in capsys.readouterr().err
 
 
 def test_cli_diarize_empty_library_fails(tmp_path, capsys):

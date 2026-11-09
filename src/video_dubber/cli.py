@@ -138,13 +138,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_translate = sub.add_parser("translate", help="Translate a transcript JSON file.")
     p_translate.add_argument("transcript", help="Input transcript JSON file.")
-    p_translate.add_argument("--target", required=True, help="Target language code, e.g. hi, es.")
+    p_translate.add_argument(
+        "--target",
+        help="Target language code, e.g. hi, es (or target_language in dubber.toml).",
+    )
     p_translate.add_argument("--source", help="Source language code (default: transcript's).")
     p_translate.add_argument(
         "--backend",
         choices=["dictionary", "argos"],
-        default="dictionary",
-        help="Translation backend (default dictionary).",
+        default=None,
+        help="Translation backend (default dictionary, or backend in dubber.toml).",
     )
     p_translate.add_argument("--glossary", help="JSON glossary file of term overrides.")
     p_translate.add_argument(
@@ -205,7 +208,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_diarize = sub.add_parser("diarize", help="Label who speaks in each transcript segment.")
     p_diarize.add_argument("transcript", help="Input transcript JSON file.")
     p_diarize.add_argument("--audio", required=True, help="Original audio WAV.")
-    p_diarize.add_argument("--library", required=True, help="Voice library JSON path.")
+    p_diarize.add_argument(
+        "--library",
+        help="Voice library JSON path (or voice_library in dubber.toml).",
+    )
     p_diarize.add_argument(
         "--threshold",
         type=float,
@@ -277,26 +283,30 @@ def build_parser() -> argparse.ArgumentParser:
     p_enhance.add_argument(
         "--target",
         type=float,
-        default=DEFAULT_TARGET_DBFS,
-        help=f"Target RMS in dBFS (default {DEFAULT_TARGET_DBFS}).",
+        default=None,
+        help=f"Target RMS in dBFS (default {DEFAULT_TARGET_DBFS}, "
+        "or enhance.target in dubber.toml).",
     )
     p_enhance.add_argument(
         "--ceiling",
         type=float,
-        default=DEFAULT_CEILING_DBFS,
-        help=f"Peak ceiling in dBFS (default {DEFAULT_CEILING_DBFS}).",
+        default=None,
+        help=f"Peak ceiling in dBFS (default {DEFAULT_CEILING_DBFS}, "
+        "or enhance.ceiling in dubber.toml).",
     )
     p_enhance.add_argument(
         "--high-pass",
         type=float,
-        default=DEFAULT_HIGH_PASS_HZ,
-        help=f"High-pass cutoff in Hz, 0 disables (default {DEFAULT_HIGH_PASS_HZ}).",
+        default=None,
+        help=f"High-pass cutoff in Hz, 0 disables (default {DEFAULT_HIGH_PASS_HZ}, "
+        "or enhance.high_pass in dubber.toml).",
     )
     p_enhance.add_argument(
         "--gate",
         type=float,
-        default=DEFAULT_GATE_THRESHOLD_DBFS,
-        help=f"Noise-gate threshold in dBFS (default {DEFAULT_GATE_THRESHOLD_DBFS}).",
+        default=None,
+        help=f"Noise-gate threshold in dBFS (default {DEFAULT_GATE_THRESHOLD_DBFS}, "
+        "or enhance.gate in dubber.toml).",
     )
     p_enhance.add_argument(
         "--no-trim",
@@ -446,25 +456,36 @@ def _cmd_convert(args: argparse.Namespace) -> int:
 
 
 def _cmd_translate(args: argparse.Namespace) -> int:
+    config = _load_config(args)
+    if config is None:
+        return 2
+    target = args.target or config.target_language
+    if not target:
+        print(
+            "error: translate needs --target or target_language in dubber.toml",
+            file=sys.stderr,
+        )
+        return 2
     with open(args.transcript, encoding="utf-8") as fh:
         transcript = Transcript.from_json(fh.read())
-    source = args.source or transcript.language or "en"
-    if args.backend == "argos":
+    source = args.source or transcript.language or config.source_language or "en"
+    backend = args.backend or config.backend
+    if backend == "argos":
         translator = ArgosTranslator()
     else:
-        translator = DictionaryTranslator(source=source, target=args.target)
+        translator = DictionaryTranslator(source=source, target=target)
     glossary = Glossary.from_json_file(args.glossary) if args.glossary else None
     translated = translate_transcript(
         transcript,
         translator,
-        target=args.target,
+        target=target,
         source=source,
         glossary=glossary,
         max_chars=args.max_chars,
     )
     stats = (
         f"{translated.word_count} words, {len(translated.segments)} segments, "
-        f"{source} -> {args.target} via {translator.name}"
+        f"{source} -> {target} via {translator.name}"
     )
     if isinstance(translator, DictionaryTranslator):
         stats += f", dictionary coverage {translator.last_coverage:.0%}"
@@ -474,7 +495,7 @@ def _cmd_translate(args: argparse.Namespace) -> int:
     if args.round_trip:
         try:
             report = check_fidelity(
-                transcript, translated, translator, target=args.target, source=source
+                transcript, translated, translator, target=target, source=source
             )
         except FidelityError as exc:
             print(f"error: fidelity check failed: {exc}", file=sys.stderr)
@@ -511,6 +532,10 @@ def _cmd_translate(args: argparse.Namespace) -> int:
 
 
 def _cmd_clone(args: argparse.Namespace) -> int:
+    config = _load_config(args)
+    if config is None:
+        return 2
+    library_path = args.library or config.voice_library
     cloner = ScriptedVoiceCloner()
     audios = [resample(load_wav(path), DEFAULT_SAMPLE_RATE) for path in args.references]
     profile = cloner.clone(args.name, audios, reference_files=list(args.references))
@@ -523,17 +548,17 @@ def _cmd_clone(args: argparse.Namespace) -> int:
         f"{profile.speaking_rate_wpm:.0f} wpm, {len(args.references)} reference(s)"
     )
     print(f"wrote {args.out}")
-    if args.library:
+    if library_path:
         import os
 
         library = (
-            VoiceLibrary.from_json_file(args.library)
-            if os.path.exists(args.library)
+            VoiceLibrary.from_json_file(library_path)
+            if os.path.exists(library_path)
             else VoiceLibrary()
         )
         library.add(profile, overwrite=True)
-        library.save(args.library)
-        print(f"added {profile.name} to library {args.library} ({len(library)} voices)")
+        library.save(library_path)
+        print(f"added {profile.name} to library {library_path} ({len(library)} voices)")
     return 0
 
 
@@ -564,10 +589,20 @@ def _cmd_voices(args: argparse.Namespace) -> int:
 
 
 def _cmd_diarize(args: argparse.Namespace) -> int:
+    config = _load_config(args)
+    if config is None:
+        return 2
+    library_path = args.library or config.voice_library
+    if not library_path:
+        print(
+            "error: diarize needs --library or voice_library in dubber.toml",
+            file=sys.stderr,
+        )
+        return 2
     with open(args.transcript, encoding="utf-8") as fh:
         transcript = Transcript.from_json(fh.read())
     audio = resample(load_wav(args.audio), DEFAULT_SAMPLE_RATE)
-    library = VoiceLibrary.from_json_file(args.library)
+    library = VoiceLibrary.from_json_file(library_path)
     labelled, report = diarize_transcript(
         transcript,
         audio,
@@ -645,13 +680,17 @@ def _load_profiles_map(path: str) -> dict[str, SpeakerProfile]:
 
 
 def _cmd_dub(args: argparse.Namespace) -> int:
+    config = _load_config(args)
+    if config is None:
+        return 2
+    bed_level = args.bed_level if args.bed_level is not None else config.bed_level
     if args.video and not args.mux_out:
         print("error: --video needs --mux-out", file=sys.stderr)
         return 2
-    if args.bed_level is not None and not args.original:
+    if bed_level is not None and not args.original:
         print("error: --bed-level needs --original", file=sys.stderr)
         return 2
-    if args.bed_level is not None and not 0.0 <= args.bed_level <= 1.0:
+    if bed_level is not None and not 0.0 <= bed_level <= 1.0:
         print("error: --bed-level must be between 0 and 1", file=sys.stderr)
         return 2
     with open(args.transcript, encoding="utf-8") as fh:
@@ -670,7 +709,7 @@ def _cmd_dub(args: argparse.Namespace) -> int:
         profile,
         original,
         profiles=profiles,
-        bed_level=args.bed_level,
+        bed_level=bed_level,
     )
     enhancement = None
     if args.enhance:
@@ -685,7 +724,7 @@ def _cmd_dub(args: argparse.Namespace) -> int:
         dub_audio,
         original,
         reference_transcript=reference,
-        bed_level=args.bed_level,
+        bed_level=bed_level,
         enhancement=enhancement,
     )
     print(f"dubbed {report.segments_dubbed} segments, {dub_audio.duration:.2f}s -> {args.out}")
@@ -727,13 +766,16 @@ def _cmd_dub(args: argparse.Namespace) -> int:
 
 
 def _cmd_enhance(args: argparse.Namespace) -> int:
+    config = _load_config(args)
+    if config is None:
+        return 2
     audio = load_wav(args.input)
     enhanced, report = enhance_audio(
         audio,
-        target_dbfs=args.target,
-        ceiling_dbfs=args.ceiling,
-        high_pass_hz=args.high_pass,
-        gate_threshold_dbfs=args.gate,
+        target_dbfs=args.target if args.target is not None else config.enhance.target,
+        ceiling_dbfs=args.ceiling if args.ceiling is not None else config.enhance.ceiling,
+        high_pass_hz=args.high_pass if args.high_pass is not None else config.enhance.high_pass,
+        gate_threshold_dbfs=args.gate if args.gate is not None else config.enhance.gate,
         trim=not args.no_trim,
     )
     save_wav(args.out, enhanced)
