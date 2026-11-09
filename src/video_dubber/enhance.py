@@ -143,8 +143,9 @@ def high_pass(audio: AudioData, cutoff_hz: float = DEFAULT_HIGH_PASS_HZ) -> Audi
     """One-pole high-pass filter — removes rumble/hum below ``cutoff_hz``.
 
     ``y[n] = a * (y[n-1] + x[n] - x[n-1])`` with ``a`` from the RC time
-    constant. A 440 Hz tone passes essentially untouched while a 50 Hz
-    hum is cut by ~20 dB at the default 80 Hz cutoff.
+    constant, run through two cascaded stages for a 12 dB/octave
+    rolloff. A 440 Hz tone passes essentially untouched while a 50 Hz
+    hum is cut by ~11 dB at the default 80 Hz cutoff.
     """
     if cutoff_hz <= 0.0:
         raise EnhanceError(f"high-pass cutoff must be positive, got {cutoff_hz}")
@@ -155,15 +156,19 @@ def high_pass(audio: AudioData, cutoff_hz: float = DEFAULT_HIGH_PASS_HZ) -> Audi
     rc = 1.0 / (2.0 * math.pi * cutoff_hz)
     dt = 1.0 / audio.sample_rate
     alpha = rc / (rc + dt)
-    out: list[float] = []
-    prev_in = 0.0
-    prev_out = 0.0
-    for sample in audio.samples:
-        value = alpha * (prev_out + sample - prev_in)
-        out.append(value)
-        prev_in = sample
-        prev_out = value
-    return AudioData(out, audio.sample_rate)
+
+    def _one_pole(samples: list[float]) -> list[float]:
+        out: list[float] = []
+        prev_in = 0.0
+        prev_out = 0.0
+        for sample in samples:
+            value = alpha * (prev_out + sample - prev_in)
+            out.append(value)
+            prev_in = sample
+            prev_out = value
+        return out
+
+    return AudioData(_one_pole(_one_pole(audio.samples)), audio.sample_rate)
 
 
 def noise_gate(
