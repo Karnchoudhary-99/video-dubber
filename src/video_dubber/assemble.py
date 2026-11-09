@@ -269,6 +269,22 @@ class SegmentRow:
             "text": self.text,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict) -> SegmentRow:
+        """Rebuild from :meth:`to_dict` output."""
+        try:
+            return cls(
+                index=int(data["index"]),
+                start=float(data["start"]),
+                end=float(data["end"]),
+                drift=float(data["drift_s"]),
+                fit_factor=float(data["fit_factor"]),
+                speaker=data.get("speaker"),
+                text=str(data.get("text", "")),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"not a valid segment row: {exc}") from exc
+
 
 @dataclass
 class DubReport:
@@ -353,6 +369,54 @@ class DubReport:
         lines.append(f"- MOS proxy (heuristic, 1-5): {self.mos_proxy:.2f}")
         lines.append(f"- Verdict: **{self.verdict}**")
         return "\n".join(lines) + "\n"
+
+    @classmethod
+    def from_dict(cls, data: dict) -> DubReport:
+        """Rebuild from :meth:`to_json` output.
+
+        Reports written before per-segment rows existed have no
+        ``segments`` key and load with an empty segment list. A
+        malformed payload raises :class:`ValueError` naming the problem.
+        """
+        if not isinstance(data, dict):
+            raise TypeError("dub report must be a JSON object")
+        try:
+            enhancement = None
+            if data.get("enhancement") is not None:
+                enhancement = EnhancementReport.from_dict(data["enhancement"])
+            return cls(
+                segments_dubbed=int(data["segments_dubbed"]),
+                total_duration=float(data["total_duration"]),
+                mean_sync_drift=float(data["mean_sync_drift_s"]),
+                max_sync_drift=float(data["max_sync_drift_s"]),
+                segments_over_drift=int(data["segments_over_drift"]),
+                mean_fit_factor=float(data["mean_fit_factor"]),
+                max_fit_factor=float(data["max_fit_factor"]),
+                extreme_fits=int(data["extreme_fits"]),
+                loudness_error_db=data.get("loudness_error_db"),
+                translation_coverage=data.get("translation_coverage"),
+                word_error_rate=data.get("word_error_rate"),
+                speakers_dubbed=int(data.get("speakers_dubbed", 0)),
+                bed_level=data.get("bed_level"),
+                enhancement=enhancement,
+                mos_proxy=float(data.get("mos_proxy", 5.0)),
+                verdict=str(data.get("verdict", "good")),
+                segments=[SegmentRow.from_dict(row) for row in data.get("segments", [])],
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"not a valid dub report: {exc}") from exc
+
+    @classmethod
+    def from_json(cls, text: str) -> DubReport:
+        """Rebuild from :meth:`to_json` output."""
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"not valid JSON: {exc}") from exc
+        try:
+            return cls.from_dict(data)
+        except TypeError as exc:
+            raise ValueError(str(exc)) from exc
 
 
 def build_report(

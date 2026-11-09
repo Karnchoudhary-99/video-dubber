@@ -75,6 +75,17 @@ class LoudnessStats:
             "duration": self.duration,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict) -> LoudnessStats:
+        """Rebuild from :meth:`to_dict` output (missing keys default to silence)."""
+        return cls(
+            rms_dbfs=float(data.get("rms_dbfs", float("-inf"))),
+            peak_dbfs=float(data.get("peak_dbfs", float("-inf"))),
+            crest_db=float(data.get("crest_db", 0.0)),
+            dc_offset=float(data.get("dc_offset", 0.0)),
+            duration=float(data.get("duration", 0.0)),
+        )
+
 
 def _dbfs(ratio: float) -> float:
     """Linear amplitude ratio -> dBFS (``-inf`` at zero)."""
@@ -281,6 +292,23 @@ class EnhancementReport:
             "high_pass_hz": self.high_pass_hz,
             "gate_threshold_dbfs": self.gate_threshold_dbfs,
         }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> EnhancementReport:
+        """Rebuild from :meth:`to_dict` output."""
+        try:
+            before = LoudnessStats.from_dict(data["before"])
+            after = LoudnessStats.from_dict(data["after"])
+            return cls(
+                before=before,
+                after=after,
+                gain_db=float(data["gain_db"]),
+                trimmed_s=float(data["trimmed_s"]),
+                high_pass_hz=float(data["high_pass_hz"]),
+                gate_threshold_dbfs=float(data["gate_threshold_dbfs"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"not a valid enhancement report: {exc}") from exc
 
     def to_markdown(self) -> str:
         lines = [

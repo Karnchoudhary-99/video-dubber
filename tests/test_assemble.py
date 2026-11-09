@@ -7,6 +7,7 @@ import pytest
 
 from video_dubber.assemble import (
     AssemblyError,
+    DubReport,
     assemble_dub,
     build_report,
     dub_transcript,
@@ -239,7 +240,53 @@ class TestBuildReport:
         assert json.loads(report.to_json())["mos_proxy"] == report.mos_proxy
         assert "MOS proxy" in report.to_markdown()
 
-    def test_wer_zero_when_dub_matches_reference(self):
+    def test_report_json_round_trip(self):
+        transcript = Transcript(
+            segments=[
+                Segment(words=_words(["hello", "mars"], 0.0), speaker="Asha"),
+                Segment(words=_words(["good", "morning"], 2.0), speaker="Ravi"),
+            ],
+            language="hi",
+        )
+        dub, factors, placed = dub_transcript(transcript, ScriptedVoiceCloner(), _profile())
+        report = build_report(transcript, placed, factors, dub)
+        loaded = DubReport.from_json(report.to_json())
+        assert loaded.verdict == report.verdict
+        assert loaded.mos_proxy == report.mos_proxy
+        assert loaded.segments_dubbed == 2
+        assert len(loaded.segments) == 2
+        assert loaded.segments[0].speaker == "Asha"
+        assert loaded.segments[1].text == "good morning"
+        assert loaded.segments[0].drift == pytest.approx(report.segments[0].drift)
+        assert loaded.to_json() == report.to_json()
+
+    def test_report_loads_without_segments_key(self):
+        # Reports written before per-segment rows existed still load.
+        transcript = Transcript(segments=[Segment(words=_words(["hello"], 0.0))], language="hi")
+        dub, factors, placed = dub_transcript(transcript, ScriptedVoiceCloner(), _profile())
+        report = build_report(transcript, placed, factors, dub)
+        data = json.loads(report.to_json())
+        del data["segments"]
+        loaded = DubReport.from_json(json.dumps(data))
+        assert loaded.segments == []
+        assert loaded.verdict == "good"
+
+    def test_report_from_json_rejects_bad_payload(self):
+        for bad in ("not json", "[]", "{}", '{"segments_dubbed": 1}'):
+            with pytest.raises(ValueError):
+                DubReport.from_json(bad)
+
+    def test_report_json_round_trip_keeps_enhancement(self):
+        from video_dubber.enhance import enhance_audio
+
+        transcript = Transcript(segments=[Segment(words=_words(["hello"], 0.0))], language="hi")
+        dub, factors, placed = dub_transcript(transcript, ScriptedVoiceCloner(), _profile())
+        enhanced, enhancement = enhance_audio(dub)
+        report = build_report(transcript, placed, factors, enhanced, enhancement=enhancement)
+        loaded = DubReport.from_json(report.to_json())
+        assert loaded.enhancement is not None
+        assert loaded.enhancement.gain_db == pytest.approx(enhancement.gain_db)
+        assert loaded.enhancement.before.rms_dbfs == pytest.approx(enhancement.before.rms_dbfs)
         transcript = Transcript(
             segments=[Segment(words=_words(["hello", "mars"], 0.0))], language="hi"
         )
