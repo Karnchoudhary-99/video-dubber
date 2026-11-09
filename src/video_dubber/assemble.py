@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from video_dubber.audio import AudioData
 from video_dubber.bed import extract_bed, mix_bed
@@ -43,6 +43,7 @@ from video_dubber.voice import SpeakerProfile, VoiceCloner, time_stretch
 __all__ = [
     "AssemblyError",
     "DubReport",
+    "SegmentRow",
     "assemble_dub",
     "build_report",
     "dub_transcript",
@@ -240,6 +241,35 @@ def mux_audio(video_path: str, audio_path: str, out_path: str) -> str:
 # --- Quality report -----------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class SegmentRow:
+    """One dubbed segment's numbers, for the per-segment report table.
+
+    ``drift`` is ``|placed end - segment end|`` in seconds; ``fit_factor``
+    is the time-stretch applied. A row is flagged (drift > 0.10s or an
+    extreme fit) by the report renderers, not here.
+    """
+
+    index: int  # 1-based segment number in the transcript
+    start: float
+    end: float
+    drift: float
+    fit_factor: float
+    speaker: str | None = None
+    text: str = ""
+
+    def to_dict(self) -> dict:
+        return {
+            "index": self.index,
+            "start": round(self.start, 3),
+            "end": round(self.end, 3),
+            "drift_s": round(self.drift, 3),
+            "fit_factor": round(self.fit_factor, 3),
+            "speaker": self.speaker,
+            "text": self.text,
+        }
+
+
 @dataclass
 class DubReport:
     """Quality numbers for one dubbed transcript (JSON + Markdown)."""
@@ -262,6 +292,7 @@ class DubReport:
     )
     mos_proxy: float = 5.0  # heuristic 1-5 quality score, NOT a listening test
     verdict: str = "good"  # "good" | "review" — review when drift/fit/loudness/WER is off
+    segments: list[SegmentRow] = field(default_factory=list)  # per-segment rows
 
     def to_json(self) -> str:
         return json.dumps(
@@ -286,6 +317,7 @@ class DubReport:
                 "enhancement": (None if self.enhancement is None else self.enhancement.to_dict()),
                 "mos_proxy": self.mos_proxy,
                 "verdict": self.verdict,
+                "segments": [row.to_dict() for row in self.segments],
             },
             indent=2,
             sort_keys=True,
@@ -348,6 +380,24 @@ def build_report(
     drifts = [
         abs((start + duration) - segment.end) for segment, (start, duration) in zip(timed, placed)
     ]
+    rows = [
+        SegmentRow(
+            index=i + 1,
+            start=segment.start,
+            end=segment.end,
+            drift=drift,
+            fit_factor=factor,
+            speaker=segment.speaker,
+            text=segment.text,
+        )
+        for i, (segment, drift, factor) in enumerate(
+            zip(
+                timed,
+                drifts,
+                fit_factors if len(fit_factors) == len(timed) else [1.0] * len(timed),
+            )
+        )
+    ]
     mean_drift = sum(drifts) / len(drifts) if drifts else 0.0
     max_drift = max(drifts, default=0.0)
     mean_fit = sum(fit_factors) / len(fit_factors) if fit_factors else 1.0
@@ -395,4 +445,5 @@ def build_report(
             wer,
         ),
         verdict=verdict,
+        segments=rows,
     )

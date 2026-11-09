@@ -26,6 +26,7 @@ from video_dubber.audio import DEFAULT_SAMPLE_RATE, load_wav, resample, save_wav
 from video_dubber.enhance import enhance_audio
 from video_dubber.extract import extract_audio
 from video_dubber.quality import wer_from_transcripts
+from video_dubber.report import render_batch_html
 from video_dubber.transcribe import (
     ScriptedTranscriber,
     WhisperCliTranscriber,
@@ -452,6 +453,10 @@ class BatchSummary:
             sort_keys=True,
         )
 
+    def to_html(self) -> str:
+        """The same summary as a self-contained HTML page."""
+        return render_batch_html(self)
+
     def to_markdown(self) -> str:
         lines = [
             "# Batch dub report",
@@ -485,11 +490,13 @@ class BatchSummary:
 
 
 def summarize(results: list[BatchJobResult], out_dir: str) -> BatchSummary:
-    """Build the batch summary and write batch-report.json/.md into ``out_dir``."""
+    """Build the batch summary and write batch-report.json/.md/.html into ``out_dir``."""
     summary = BatchSummary(results=results)
     os.makedirs(out_dir, exist_ok=True)
     with open(os.path.join(out_dir, "batch-report.json"), "w", encoding="utf-8") as fh:
         fh.write(summary.to_json())
     with open(os.path.join(out_dir, "batch-report.md"), "w", encoding="utf-8") as fh:
         fh.write(summary.to_markdown())
+    with open(os.path.join(out_dir, "batch-report.html"), "w", encoding="utf-8") as fh:
+        fh.write(summary.to_html())
     return summary

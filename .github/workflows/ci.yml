@@ -22,3 +22,4 @@ jobs:
       - run: python examples/demo_enhance.py
       - run: python examples/demo_fidelity.py
       - run: python examples/demo_config.py
+      - run: python examples/demo_report.py
