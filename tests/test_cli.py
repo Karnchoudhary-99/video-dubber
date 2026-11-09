@@ -486,7 +486,10 @@ def test_cli_enhance_trims_and_normalizes(tmp_path, capsys):
     from video_dubber.enhance import measure_loudness
 
     src = tmp_path / "raw.wav"
-    save_wav(str(src), concat(make_silence(0.3), make_sine(440.0, 0.5, amplitude=0.05), make_silence(0.3)))
+    save_wav(
+        str(src),
+        concat(make_silence(0.3), make_sine(440.0, 0.5, amplitude=0.05), make_silence(0.3)),
+    )
     out = tmp_path / "clean.wav"
     report = tmp_path / "enhance.md"
     assert main(["enhance", str(src), "--out", str(out), "--report-out", str(report)]) == 0

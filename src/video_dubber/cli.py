@@ -238,7 +238,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Enhance the finished dub track (hum cut, noise gate, loudness "
         "normalize to -16 dBFS); timing is preserved, no trimming.",
     )
-    p_dub.add_argument("--report-format",
+    p_dub.add_argument(
+        "--report-format",
         choices=["json", "md"],
         default="json",
         help="Quality report format (default json).",

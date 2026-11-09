@@ -257,7 +257,9 @@ class DubReport:
     word_error_rate: float | None = None  # vs a same-language reference, None if not given
     speakers_dubbed: int = 0  # distinct speaker labels in the dubbed segments
     bed_level: float | None = None  # music-bed mix level, None when no bed was kept
-    enhancement: EnhancementReport | None = None  # audio-enhancement numbers, None when not enhanced
+    enhancement: EnhancementReport | None = (
+        None  # audio-enhancement numbers, None when not enhanced
+    )
     mos_proxy: float = 5.0  # heuristic 1-5 quality score, NOT a listening test
     verdict: str = "good"  # "good" | "review" — review when drift/fit/loudness/WER is off
 
@@ -281,9 +283,7 @@ class DubReport:
                 ),
                 "speakers_dubbed": self.speakers_dubbed,
                 "bed_level": self.bed_level,
-                "enhancement": (
-                    None if self.enhancement is None else self.enhancement.to_dict()
-                ),
+                "enhancement": (None if self.enhancement is None else self.enhancement.to_dict()),
                 "mos_proxy": self.mos_proxy,
                 "verdict": self.verdict,
             },
