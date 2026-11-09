@@ -429,6 +429,84 @@ def test_cli_dub_bed_level_from_config(tmp_path, capsys):
     assert data["bed_level"] == pytest.approx(0.3)
 
 
+def test_cli_translate_round_trip_threshold_controls_flagging(tmp_path, capsys):
+    transcript = tmp_path / "en.json"
+    transcript.write_text(
+        Transcript(
+            segments=[
+                {
+                    "words": [
+                        {"text": "Hello", "start": 0.0, "end": 0.5},
+                        {"text": "world", "start": 0.5, "end": 1.0},
+                    ],
+                    "speaker": None,
+                },
+                {
+                    "words": [
+                        {"text": "See", "start": 2.0, "end": 2.5},
+                        {"text": "you", "start": 2.5, "end": 3.0},
+                        {"text": "tomorrow", "start": 3.0, "end": 3.5},
+                    ],
+                    "speaker": None,
+                },
+            ],
+            language="en",
+        ).to_json()
+    )
+    # "tomorrow" round-trips at 0.5 (comes back "yesterday"): a 0.4
+    # threshold passes it, the default 0.6 flags it.
+    assert (
+        main(
+            [
+                "translate",
+                str(transcript),
+                "--target",
+                "hi",
+                "--round-trip",
+                "--fidelity-threshold",
+                "0.4",
+            ]
+        )
+        == 0
+    )
+    assert "fidelity: verdict good" in capsys.readouterr().out
+    assert (
+        main(
+            [
+                "translate",
+                str(transcript),
+                "--target",
+                "hi",
+                "--round-trip",
+                "--fidelity-threshold",
+                "0.9",
+            ]
+        )
+        == 0
+    )
+    assert "fidelity: verdict review" in capsys.readouterr().out
+
+
+def test_cli_translate_round_trip_bad_threshold_errors(tmp_path, capsys):
+    transcript = tmp_path / "en.json"
+    _write_transcript(transcript)
+    assert (
+        main(
+            [
+                "translate",
+                str(transcript),
+                "--target",
+                "hi",
+                "--round-trip",
+                "--fidelity-threshold",
+                "1.5",
+            ]
+        )
+        == 2
+    )
+    assert "must be between 0 and 1" in capsys.readouterr().err
+
+
 def test_cli_translate_srt_with_chunking(tmp_path):
     transcript = tmp_path / "en.json"
     _write_transcript(transcript)

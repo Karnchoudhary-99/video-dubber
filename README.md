@@ -107,7 +107,8 @@ video-dubber translate transcript.json --target hi \
   after sentence punctuation.
 - **Fidelity check** (`--round-trip`): after translating, each segment is
   translated back to the source language and compared with the original
-  (word-level Jaccard, threshold 0.6). Segments that come back mangled
+  (word-level Jaccard, threshold 0.6, tunable with
+  `--fidelity-threshold`). Segments that come back mangled
   are flagged in a JSON/Markdown report (`--fidelity-out`) so a human
   can fix them before the dub is rendered. A perfect score means the
   translation is *stable*, not that it is correct — unknown words pass
@@ -373,8 +374,14 @@ Multi-speaker dubbing, voice library and subtitle export are done
 Speaker diarization is done (243 tests). Audio enhancement is done
 (255 tests): loudness normalize with soft limiter, hum high-pass,
 noise gate, silence trim, `enhance` CLI, `dub --enhance` and batch
-`enhance`, with before/after numbers in the quality report. Remaining:
-the self-review checklist and public flip — the
+`enhance`, with before/after numbers in the quality report. Translation
+fidelity is done (282 tests): round-trip back-translation check with
+`translate --round-trip`, a tunable `--fidelity-threshold`, JSON/Markdown
+reports, and a grapheme-aware dictionary tokenizer (the check caught
+the old `\w` tokenizer shattering Devanagari words at combining marks).
+Project config file is done (315 tests): `dubber.toml` defaults for
+translate/dub/enhance/diarize/clone, a `config` subcommand, and an
+example file. Remaining: the self-review checklist and public flip — the
 project stays private per the 5–7 day pace rule (started 2026-11-08,
 earliest completion 2026-11-13).
 

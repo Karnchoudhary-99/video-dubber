@@ -166,6 +166,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Write the fidelity report here (needs --round-trip).",
     )
     p_translate.add_argument(
+        "--fidelity-threshold",
+        type=float,
+        default=0.6,
+        help="Flag segments scoring below this in the round-trip check "
+        "(0-1, default 0.6; needs --round-trip).",
+    )
+    p_translate.add_argument(
         "--fidelity-format",
         choices=["json", "md"],
         default="json",
@@ -493,9 +500,21 @@ def _cmd_translate(args: argparse.Namespace) -> int:
             stats += f" (untranslated: {', '.join(translator.last_unknown[:5])})"
     print(stats)
     if args.round_trip:
+        if not 0.0 <= args.fidelity_threshold <= 1.0:
+            print(
+                "error: --fidelity-threshold must be between 0 and 1, "
+                f"got {args.fidelity_threshold}",
+                file=sys.stderr,
+            )
+            return 2
         try:
             report = check_fidelity(
-                transcript, translated, translator, target=target, source=source
+                transcript,
+                translated,
+                translator,
+                target=target,
+                source=source,
+                threshold=args.fidelity_threshold,
             )
         except FidelityError as exc:
             print(f"error: fidelity check failed: {exc}", file=sys.stderr)
