@@ -13,6 +13,7 @@ keeping the speaker's voice.
 - [x] Dub assembly (lip-sync timing, loudness match, mux back to video)
 - [x] CLI + batch mode, quality report (WER, MOS proxy, sync drift)
 - [x] Multi-speaker dubbing, voice library, subtitle export
+- [x] Background-music bed (extract, duck, mix under the dub)
 - [ ] Self-review checklist, then public
 
 ## Quick start
@@ -206,7 +207,17 @@ video-dubber dub translated.json --profile asha.json \
 - **MOS proxy**: a heuristic 1–5 score from drift, fits, loudness and
   WER. It ranks dubs and flags bad ones; it is not a listening test,
   and the report says so.
-- Full pipeline in one go: `python examples/demo_dub.py`.
+- **Music bed** (`--bed-level 0.3`, needs `--original`): a dub that
+  replaces the whole soundtrack with silence between lines sounds
+  dead. The original's non-speech audio — music, ambience, crowd
+  noise — is extracted (speech windows muted with 30 ms fades, so the
+  original voice never bleeds through) and mixed under the dubbed
+  speech at the given level. In batch manifests the same key is
+  `bed_level` (video jobs only). The report records the bed level.
+  `video_dubber.bed` also offers `duck_bed` for externally supplied
+  music: attenuate a music track under the placed dubbed clips.
+- Full pipeline in one go: `python examples/demo_dub.py`. Bed demo:
+  `python examples/demo_bed.py`.
 
 ## Batch mode
 
@@ -250,7 +261,7 @@ Audio extraction + transcription are done (62 tests). Translation is done
 (94 tests). Voice cloning is done (126 tests). Dub assembly is done
 (147 tests). Batch mode + quality metrics are done (185 tests).
 Multi-speaker dubbing, voice library and subtitle export are done
-(206 tests). Remaining: the self-review checklist and public flip — the
+(206 tests). Background-music bed preservation is done (228 tests). Remaining: the self-review checklist and public flip — the
 project stays private per the 5–7 day pace rule (started 2026-11-08,
 earliest completion 2026-11-13).
 
