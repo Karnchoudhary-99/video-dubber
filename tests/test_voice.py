@@ -10,6 +10,7 @@ from video_dubber.voice import (
     ScriptedVoiceCloner,
     SpeakerProfile,
     VoiceCloneError,
+    VoiceLibrary,
     adjust_prosody,
     clone_from_references,
     cosine_similarity,
@@ -203,3 +204,67 @@ class TestProsody:
     def test_time_stretch_invalid_factor_raises(self):
         with pytest.raises(VoiceCloneError, match="factor must be positive"):
             time_stretch(_voice(220.0, 0.5), 0)
+
+
+class TestVoiceLibrary:
+    def _lib(self):
+        lib = VoiceLibrary()
+        lib.add(SpeakerProfile(name="Asha", embedding=[0.25] * EMBEDDING_DIM, base_pitch_hz=220.0))
+        lib.add(SpeakerProfile(name="Ravi", embedding=[0.1] * 8 + [0.4] * 8, base_pitch_hz=110.0))
+        return lib
+
+    def test_add_get_names_len(self):
+        lib = self._lib()
+        assert len(lib) == 2
+        assert lib.names() == ["Asha", "Ravi"]
+        assert lib.get("Asha").base_pitch_hz == 220.0
+
+    def test_duplicate_name_rejected_without_overwrite(self):
+        lib = self._lib()
+        with pytest.raises(VoiceCloneError, match="already has a profile"):
+            lib.add(SpeakerProfile(name="Asha", embedding=[0.25] * EMBEDDING_DIM))
+        lib.add(
+            SpeakerProfile(name="Asha", embedding=[0.25] * EMBEDDING_DIM, base_pitch_hz=250.0),
+            overwrite=True,
+        )
+        assert lib.get("Asha").base_pitch_hz == 250.0
+        assert len(lib) == 2
+
+    def test_unknown_get_and_remove_raise(self):
+        lib = self._lib()
+        with pytest.raises(VoiceCloneError, match="no profile named 'Nobody'"):
+            lib.get("Nobody")
+        with pytest.raises(VoiceCloneError, match="no profile named 'Nobody'"):
+            lib.remove("Nobody")
+        lib.remove("Ravi")
+        assert lib.names() == ["Asha"]
+
+    def test_match_finds_same_voice_and_rejects_stranger(self):
+        lib = self._lib()
+        asha = lib.get("Asha").embedding
+        assert lib.match(asha) == "Asha"
+        # A flat embedding is far from both stored voices.
+        assert lib.match([0.0] * 15 + [1.0]) is None
+
+    def test_match_threshold_must_be_in_range(self):
+        with pytest.raises(VoiceCloneError, match="threshold must be in"):
+            self._lib().match([0.25] * EMBEDDING_DIM, threshold=1.5)
+
+    def test_json_round_trip_via_file(self, tmp_path):
+        lib = self._lib()
+        path = tmp_path / "voices.json"
+        lib.save(str(path))
+        again = VoiceLibrary.from_json_file(str(path))
+        assert again.names() == ["Asha", "Ravi"]
+        assert again.get("Ravi").base_pitch_hz == 110.0
+        assert again.get("Ravi").embedding == [0.1] * 8 + [0.4] * 8
+
+    def test_bad_library_json_raises(self, tmp_path):
+        path = tmp_path / "bad.json"
+        path.write_text("{nope", encoding="utf-8")
+        with pytest.raises(VoiceCloneError, match="invalid voice library"):
+            VoiceLibrary.from_json_file(str(path))
+
+    def test_missing_library_file_raises(self):
+        with pytest.raises(VoiceCloneError, match="cannot read voice library"):
+            VoiceLibrary.from_json_file("/nonexistent/voices.json")

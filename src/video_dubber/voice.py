@@ -37,6 +37,7 @@ __all__ = [
     "SpeakerProfile",
     "VoiceCloneError",
     "VoiceCloner",
+    "VoiceLibrary",
     "clone_from_references",
     "cosine_similarity",
     "extract_embedding",
@@ -107,6 +108,102 @@ class SpeakerProfile:
             )
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
             raise VoiceCloneError(f"invalid speaker profile JSON: {exc}") from exc
+
+
+class VoiceLibrary:
+    """A named collection of speaker profiles, persisted as one JSON file.
+
+    A library is how a multi-speaker project keeps its voices together:
+    one file maps speaker names (the labels a transcript's segments
+    carry) to :class:`SpeakerProfile` objects. :meth:`match` identifies
+    a speaker from a fresh recording by cosine similarity against the
+    stored embeddings — a match needs a similarity above ``threshold``
+    (default 0.90), otherwise it returns ``None`` rather than guessing.
+    """
+
+    def __init__(self, profiles: dict[str, SpeakerProfile] | None = None) -> None:
+        self._profiles: dict[str, SpeakerProfile] = dict(profiles or {})
+
+    def add(self, profile: SpeakerProfile, overwrite: bool = False) -> None:
+        """Add ``profile`` under its own name; duplicates need ``overwrite``."""
+        if profile.name in self._profiles and not overwrite:
+            raise VoiceCloneError(
+                f"library already has a profile named {profile.name!r} "
+                "(pass overwrite=True to replace it)"
+            )
+        self._profiles[profile.name] = profile
+
+    def get(self, name: str) -> SpeakerProfile:
+        """Return the profile for ``name``; raises :class:`VoiceCloneError`."""
+        try:
+            return self._profiles[name]
+        except KeyError as exc:
+            raise VoiceCloneError(
+                f"no profile named {name!r} in the library "
+                f"(have: {', '.join(self.names()) or 'none'})"
+            ) from exc
+
+    def remove(self, name: str) -> None:
+        """Drop the profile for ``name``; raises if it is not there."""
+        if name not in self._profiles:
+            raise VoiceCloneError(f"no profile named {name!r} in the library")
+        del self._profiles[name]
+
+    def names(self) -> list[str]:
+        """Speaker names in insertion order."""
+        return list(self._profiles)
+
+    def __len__(self) -> int:
+        return len(self._profiles)
+
+    def match(self, embedding: list[float], threshold: float = 0.90) -> str | None:
+        """Best-matching speaker name for ``embedding``, or ``None``.
+
+        Returns the name whose stored embedding has the highest cosine
+        similarity, but only when that similarity clears ``threshold`` —
+        below it the voice is unknown, not mislabelled.
+        """
+        if not 0.0 <= threshold <= 1.0:
+            raise VoiceCloneError(f"match threshold must be in [0, 1], got {threshold}")
+        best_name, best_score = None, threshold
+        for name, profile in self._profiles.items():
+            score = cosine_similarity(embedding, profile.embedding)
+            if score > best_score:
+                best_name, best_score = name, score
+        return best_name
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {"profiles": [json.loads(p.to_json()) for p in self._profiles.values()]},
+            indent=2,
+            sort_keys=True,
+        )
+
+    @classmethod
+    def from_json(cls, data: str) -> VoiceLibrary:
+        try:
+            raw = json.loads(data)
+            profiles = [SpeakerProfile.from_json(json.dumps(p)) for p in raw["profiles"]]
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            raise VoiceCloneError(f"invalid voice library JSON: {exc}") from exc
+        library = cls()
+        for profile in profiles:
+            library.add(profile)
+        return library
+
+    def save(self, path: str) -> None:
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(self.to_json())
+
+    @classmethod
+    def from_json_file(cls, path: str) -> VoiceLibrary:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                return cls.from_json(fh.read())
+        except OSError as exc:
+            raise VoiceCloneError(f"cannot read voice library {path!r}: {exc}") from exc
+        except VoiceCloneError as exc:
+            raise VoiceCloneError(f"invalid voice library {path!r}: {exc}") from exc
 
 
 # --- Spectral features (stdlib only) -----------------------------------------
