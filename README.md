@@ -169,6 +169,8 @@ video-dubber dub translated.json --profile narrator.json \
   `translated.srt` / `translated.vtt` too, and a batch job can carry a
   `"profiles": {"Asha": "asha.json"}` key with the same meaning.
 - Try it without recordings: `python examples/demo_multispeaker.py`.
+  A runnable batch version lives in `examples/multispeaker/` — run it
+  with `video-dubber batch examples/multispeaker/manifest.json --out-dir out/`.
 
 ## Dub assembly
 
@@ -248,7 +250,7 @@ Audio extraction + transcription are done (62 tests). Translation is done
 (94 tests). Voice cloning is done (126 tests). Dub assembly is done
 (147 tests). Batch mode + quality metrics are done (185 tests).
 Multi-speaker dubbing, voice library and subtitle export are done
-(205 tests). Remaining: the self-review checklist and public flip — the
+(206 tests). Remaining: the self-review checklist and public flip — the
 project stays private per the 5–7 day pace rule (started 2026-11-08,
 earliest completion 2026-11-13).
 

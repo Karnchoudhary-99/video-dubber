@@ -1,0 +1,13 @@
+{
+  "jobs": [
+    {
+      "name": "chat",
+      "transcript": "transcript.json",
+      "target": "hi",
+      "profile": "asha.json",
+      "profiles": {
+        "Ravi": "ravi.json"
+      }
+    }
+  ]
+}

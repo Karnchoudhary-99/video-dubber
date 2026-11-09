@@ -378,3 +378,19 @@ def test_run_job_with_speaker_profiles_uses_them(tmp_path):
     with open(result.outputs["report"], encoding="utf-8") as fh:
         report = json.loads(fh.read())
     assert report["speakers_dubbed"] == 2
+
+
+def test_shipped_multispeaker_manifest_runs_end_to_end(tmp_path):
+    """The examples/multispeaker manifest is a working, runnable example."""
+    import os
+
+    from video_dubber.batch import BatchManifest, run_job
+
+    manifest = BatchManifest.from_json_file("examples/multispeaker/manifest.json")
+    assert len(manifest.jobs) == 1
+    assert manifest.jobs[0].profiles == {"Ravi": os.path.abspath("examples/multispeaker/ravi.json")}
+    result = run_job(manifest.jobs[0], str(tmp_path / "out"))
+    assert result.status == "ok"
+    assert result.outputs["translated_srt"].endswith("translated.srt")
+    with open(result.outputs["report"], encoding="utf-8") as fh:
+        assert json.loads(fh.read())["speakers_dubbed"] == 2
