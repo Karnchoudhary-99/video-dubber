@@ -14,6 +14,7 @@ keeping the speaker's voice.
 - [x] CLI + batch mode, quality report (WER, MOS proxy, sync drift)
 - [x] Multi-speaker dubbing, voice library, subtitle export
 - [x] Background-music bed (extract, duck, mix under the dub)
+- [x] Speaker diarization (label who speaks, from the voice library)
 - [ ] Self-review checklist, then public
 
 ## Quick start
@@ -173,6 +174,37 @@ video-dubber dub translated.json --profile narrator.json \
   A runnable batch version lives in `examples/multispeaker/` — run it
   with `video-dubber batch examples/multispeaker/manifest.json --out-dir out/`.
 
+## Speaker diarization
+
+Transcription gives timed words, but no speaker labels — a two-person
+interview arrives as one flat stream. Diarization labels it:
+
+```bash
+# Label each segment by matching its audio against the voice library
+video-dubber diarize transcript.json --audio clip.wav \
+  --library voices.json --out labelled.json --report-out report.json
+```
+
+- Each segment's audio is embedded (the same spectral fingerprint
+  voice cloning uses) and matched against every profile in the library;
+  the best match above `--threshold` (default 0.90) becomes the
+  segment's `speaker` label. The labelled transcript feeds straight
+  into multi-speaker dubbing (`dub --profiles`), so the full chain is
+  `transcribe -> diarize -> translate -> dub` with no hand-labelling.
+- Unknown or silent segments stay unlabelled instead of being guessed,
+  and segments that already carry a label are kept unless
+  `--overwrite` is passed — diarization labels, it never silently
+  relabels.
+- This is diarization-lite: the stdlib embedding separates clearly
+  different voices well, but two similar voices (or segments under
+  ~0.3 s) can land close together, and then the segment is honestly
+  `unknown` in the report rather than mislabelled. Measured on the
+  demo double: formant-synthesized voices at 110 vs 220 Hz cross at
+  0.906–0.921 similarity — above the 0.90 default — so similar demo
+  voices need a higher `--threshold` (e.g. 0.95; same-voice is 0.995+).
+  Pure-tone references separate further (0.805 cross-voice).
+- Try it without recordings: `python examples/demo_diarize.py`.
+
 ## Dub assembly
 
 Render a full dubbed track from a translated transcript and a speaker
@@ -261,7 +293,8 @@ Audio extraction + transcription are done (62 tests). Translation is done
 (94 tests). Voice cloning is done (126 tests). Dub assembly is done
 (147 tests). Batch mode + quality metrics are done (185 tests).
 Multi-speaker dubbing, voice library and subtitle export are done
-(206 tests). Background-music bed preservation is done (228 tests). Remaining: the self-review checklist and public flip — the
+(206 tests). Background-music bed preservation is done (228 tests).
+Speaker diarization is done (243 tests). Remaining: the self-review checklist and public flip — the
 project stays private per the 5–7 day pace rule (started 2026-11-08,
 earliest completion 2026-11-13).
 
