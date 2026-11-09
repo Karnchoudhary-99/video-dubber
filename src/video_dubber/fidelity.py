@@ -96,3 +96,104 @@ def round_trip_text(
     back = reverse_translator(translator)
     back_translated = back.translate(translated, target, source)
     return translated, back_translated, word_jaccard(text, back_translated)
+
+
+@dataclass
+class SegmentFidelity:
+    """Round-trip result for one transcript segment."""
+
+    index: int
+    source_text: str
+    translated_text: str
+    back_text: str
+    score: float
+    flagged: bool
+
+    def to_dict(self) -> dict:
+        return {
+            "index": self.index,
+            "source_text": self.source_text,
+            "translated_text": self.translated_text,
+            "back_text": self.back_text,
+            "score": round(self.score, 4),
+            "flagged": self.flagged,
+        }
+
+
+@dataclass
+class FidelityReport:
+    """Round-trip fidelity for a whole transcript.
+
+    ``verdict`` is ``good`` when every segment clears the threshold,
+    ``review`` when any segment is flagged. The report names the
+    flagged segments so a human knows exactly where to look.
+    """
+
+    source: str
+    target: str
+    backend: str
+    threshold: float
+    segments: list[SegmentFidelity] = field(default_factory=list)
+
+    @property
+    def mean_score(self) -> float:
+        if not self.segments:
+            return 1.0
+        return sum(s.score for s in self.segments) / len(self.segments)
+
+    @property
+    def min_score(self) -> float:
+        if not self.segments:
+            return 1.0
+        return min(s.score for s in self.segments)
+
+    @property
+    def flagged(self) -> list[SegmentFidelity]:
+        return [s for s in self.segments if s.flagged]
+
+    @property
+    def verdict(self) -> str:
+        return "review" if self.flagged else "good"
+
+    def to_dict(self) -> dict:
+        return {
+            "source": self.source,
+            "target": self.target,
+            "backend": self.backend,
+            "threshold": self.threshold,
+            "verdict": self.verdict,
+            "mean_score": round(self.mean_score, 4),
+            "min_score": round(self.min_score, 4),
+            "flagged_count": len(self.flagged),
+            "segments": [s.to_dict() for s in self.segments],
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), indent=2, ensure_ascii=False)
+
+    def to_markdown(self) -> str:
+        lines = [
+            "# Translation fidelity report",
+            "",
+            f"- Direction: {self.source} -> {self.target} (via {self.backend})",
+            f"- Verdict: **{self.verdict}** "
+            f"(mean {self.mean_score:.2f}, min {self.min_score:.2f}, "
+            f"threshold {self.threshold:.2f})",
+            f"- Flagged segments: {len(self.flagged)} of {len(self.segments)}",
+            "",
+        ]
+        if self.flagged:
+            lines.append("## Needs review")
+            lines.append("")
+            for segment in self.flagged:
+                lines.append(
+                    f"- Segment {segment.index} (score {segment.score:.2f}): "
+                    f"“{segment.source_text}” -> “{segment.translated_text}” "
+                    f"-> back “{segment.back_text}”"
+                )
+            lines.append("")
+        lines.append(
+            "_A perfect score means the translation is stable, not that it is "
+            "correct — unknown words pass through untouched both ways._"
+        )
+        return "\n".join(lines) + "\n"
