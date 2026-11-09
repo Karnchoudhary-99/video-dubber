@@ -17,3 +17,4 @@ jobs:
       - run: python examples/demo.py
       - run: python examples/demo_batch.py
       - run: python examples/demo_multispeaker.py
+      - run: python examples/demo_bed.py
