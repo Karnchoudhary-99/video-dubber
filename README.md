@@ -198,7 +198,11 @@ video-dubber diarize transcript.json --audio clip.wav \
 - This is diarization-lite: the stdlib embedding separates clearly
   different voices well, but two similar voices (or segments under
   ~0.3 s) can land close together, and then the segment is honestly
-  `unknown` in the report rather than mislabelled.
+  `unknown` in the report rather than mislabelled. Measured on the
+  demo double: formant-synthesized voices at 110 vs 220 Hz cross at
+  0.906–0.921 similarity — above the 0.90 default — so similar demo
+  voices need a higher `--threshold` (e.g. 0.95; same-voice is 0.995+).
+  Pure-tone references separate further (0.805 cross-voice).
 - Try it without recordings: `python examples/demo_diarize.py`.
 
 ## Dub assembly
@@ -290,7 +294,7 @@ Audio extraction + transcription are done (62 tests). Translation is done
 (147 tests). Batch mode + quality metrics are done (185 tests).
 Multi-speaker dubbing, voice library and subtitle export are done
 (206 tests). Background-music bed preservation is done (228 tests).
-Speaker diarization is done (242 tests). Remaining: the self-review checklist and public flip — the
+Speaker diarization is done (243 tests). Remaining: the self-review checklist and public flip — the
 project stays private per the 5–7 day pace rule (started 2026-11-08,
 earliest completion 2026-11-13).
 

@@ -116,6 +116,48 @@ class TestDiarizeTranscript:
         assert labelled.language == "en"
         assert labelled.source == "clip.mp4"
 
+    def test_synthesized_voices_need_a_higher_threshold(self):
+        """Formant-synthesized demo voices sit close together.
+
+        Measured: 110 vs 220 Hz synthesized speech cross at 0.906-0.921
+        cosine similarity, above the 0.90 default — so similar demo voices
+        need ``threshold=0.95`` (same-voice is 0.995+) to label correctly.
+        This test pins that guidance instead of silently mislabelling.
+        """
+        from video_dubber.voice import EMBEDDING_DIM, SpeakerProfile, synthesize_text
+
+        asha = SpeakerProfile(name="Asha", embedding=[0.25] * EMBEDDING_DIM, base_pitch_hz=220.0)
+        ravi = SpeakerProfile(name="Ravi", embedding=[0.25] * EMBEDDING_DIM, base_pitch_hz=110.0)
+        first = synthesize_text("hello mars welcome back", asha)
+        second = synthesize_text("good morning from phobos", ravi)
+        audio = concat(first, second)
+        split = first.duration
+        transcript = Transcript(
+            segments=[
+                Segment(
+                    words=[
+                        Word("hello", 0.0, split / 4),
+                        Word("mars", split / 4, split / 2),
+                        Word("welcome", split / 2, split * 3 / 4),
+                        Word("back", split * 3 / 4, split),
+                    ]
+                ),
+                Segment(
+                    words=[
+                        Word("good", split, split + second.duration / 4),
+                        Word("morning", split + second.duration / 4, split + second.duration / 2),
+                        Word("from", split + second.duration / 2, split + second.duration * 3 / 4),
+                        Word("phobos", split + second.duration * 3 / 4, split + second.duration),
+                    ]
+                ),
+            ],
+            language="en",
+        )
+        labelled, report = diarize_transcript(transcript, audio, _library(), threshold=0.95)
+        assert [s.speaker for s in labelled.segments] == ["Asha", "Ravi"]
+        assert report.labels[0].speaker == "Asha"
+        assert report.labels[1].speaker == "Ravi"
+
 
 class TestDiarizationReport:
     def test_json_round_trip_and_markdown(self):
