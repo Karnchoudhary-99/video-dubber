@@ -250,6 +250,10 @@ def trim_silence(
     while last > first and _frame_is_silent(max(first, last - frame)):
         last -= frame
 
+    if first >= last:
+        # No speech at all — the whole clip is silence.
+        return AudioData([], audio.sample_rate), audio.duration
+
     margin = int(margin_s * sr)
     lo = max(0, first - margin)
     hi = min(len(audio.samples), last + margin)
