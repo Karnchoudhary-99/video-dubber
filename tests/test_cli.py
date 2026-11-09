@@ -801,3 +801,125 @@ def test_cli_clone_adds_to_library(tmp_path, capsys):
     assert "added Asha to library" in capsys.readouterr().out
     assert main(["voices", str(library)]) == 0
     assert "Asha:" in capsys.readouterr().out
+
+
+def _make_diarize_fixtures(tmp_path):
+    """Two-speaker audio + unlabelled transcript + a two-voice library."""
+    from video_dubber.transcript import Segment, Transcript, Word
+    from video_dubber.voice import VoiceLibrary, clone_from_references
+
+    audio = tmp_path / "clip.wav"
+    save_wav(str(audio), concat(make_sine(220.0, 1.0), make_sine(110.0, 1.0)))
+    transcript = Transcript(
+        segments=[
+            Segment(words=[Word("hello", 0.0, 0.5), Word("mars", 0.5, 1.0)]),
+            Segment(words=[Word("good", 1.0, 1.5), Word("morning", 1.5, 2.0)]),
+        ],
+        language="en",
+    )
+    transcript_path = tmp_path / "transcript.json"
+    transcript_path.write_text(transcript.to_json(), encoding="utf-8")
+    library = VoiceLibrary()
+    library.add(clone_from_references("Asha", [make_sine(220.0, 1.0)]))
+    library.add(clone_from_references("Ravi", [make_sine(110.0, 1.0)]))
+    library_path = tmp_path / "voices.json"
+    library.save(str(library_path))
+    return audio, transcript_path, library_path
+
+
+def test_cli_diarize_labels_segments(tmp_path, capsys):
+    audio, transcript_path, library_path = _make_diarize_fixtures(tmp_path)
+    out = tmp_path / "labelled.json"
+    report_path = tmp_path / "report.json"
+    assert (
+        main(
+            [
+                "diarize",
+                str(transcript_path),
+                "--audio",
+                str(audio),
+                "--library",
+                str(library_path),
+                "--out",
+                str(out),
+                "--report-out",
+                str(report_path),
+            ]
+        )
+        == 0
+    )
+    labelled = Transcript.from_json(out.read_text(encoding="utf-8"))
+    assert [s.speaker for s in labelled.segments] == ["Asha", "Ravi"]
+    stdout = capsys.readouterr().out
+    assert "Asha" in stdout and "Ravi" in stdout
+    assert "2 segments: 2 matched, 0 kept, 0 unknown" in stdout
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert [label["speaker"] for label in report["labels"]] == ["Asha", "Ravi"]
+
+
+def test_cli_diarize_keeps_existing_label_without_overwrite(tmp_path, capsys):
+    from video_dubber.transcript import Segment, Transcript, Word
+
+    audio, transcript_path, library_path = _make_diarize_fixtures(tmp_path)
+    transcript = Transcript.from_json(transcript_path.read_text(encoding="utf-8"))
+    transcript.segments[0].speaker = "Ravi"  # wrong label, must survive
+    transcript_path.write_text(transcript.to_json(), encoding="utf-8")
+    out = tmp_path / "labelled.json"
+    assert (
+        main(
+            [
+                "diarize",
+                str(transcript_path),
+                "--audio",
+                str(audio),
+                "--library",
+                str(library_path),
+                "--out",
+                str(out),
+            ]
+        )
+        == 0
+    )
+    labelled = Transcript.from_json(out.read_text(encoding="utf-8"))
+    assert labelled.segments[0].speaker == "Ravi"
+    assert "1 matched, 1 kept, 0 unknown" in capsys.readouterr().out
+    assert (
+        main(
+            [
+                "diarize",
+                str(transcript_path),
+                "--audio",
+                str(audio),
+                "--library",
+                str(library_path),
+                "--out",
+                str(out),
+                "--overwrite",
+            ]
+        )
+        == 0
+    )
+    labelled = Transcript.from_json(out.read_text(encoding="utf-8"))
+    assert labelled.segments[0].speaker == "Asha"
+
+
+def test_cli_diarize_empty_library_fails(tmp_path, capsys):
+    from video_dubber.voice import VoiceLibrary
+
+    audio, transcript_path, _ = _make_diarize_fixtures(tmp_path)
+    empty = tmp_path / "empty.json"
+    VoiceLibrary().save(str(empty))
+    assert (
+        main(
+            [
+                "diarize",
+                str(transcript_path),
+                "--audio",
+                str(audio),
+                "--library",
+                str(empty),
+            ]
+        )
+        == 1
+    )
+    assert "empty voice library" in capsys.readouterr().err

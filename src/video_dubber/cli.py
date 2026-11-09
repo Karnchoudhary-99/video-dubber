@@ -11,6 +11,8 @@ Subcommands (see ``video-dubber <cmd> --help`` for details):
   (dictionary backend, or ``argos-translate`` when installed).
 * ``clone`` — build a speaker profile from reference WAV recordings.
 * ``voices`` — list the profiles in a voice library, or add one to it.
+* ``diarize`` — label who speaks in each transcript segment, by matching
+  the segment audio against a voice library.
 * ``synthesize`` — render text as audio in a cloned voice (demo synthesis).
 * ``dub`` — render a full dubbed track from a translated transcript and
   a speaker profile, with a quality report (and optional video mux).
@@ -33,6 +35,11 @@ from video_dubber.batch import (
     BatchManifest,
     run_batch,
     summarize,
+)
+from video_dubber.diarize import (
+    DEFAULT_THRESHOLD,
+    DiarizeError,
+    diarize_transcript,
 )
 from video_dubber.extract import ExtractionError, extract_audio
 from video_dubber.transcribe import (
@@ -161,6 +168,32 @@ def build_parser() -> argparse.ArgumentParser:
     p_synth.add_argument("--wpm", type=float, help="Speaking rate override.")
     p_synth.add_argument("--semitones", type=float, default=0.0, help="Pitch shift in semitones.")
     p_synth.add_argument("--out", required=True, help="Output WAV path.")
+
+    p_diarize = sub.add_parser(
+        "diarize", help="Label who speaks in each transcript segment."
+    )
+    p_diarize.add_argument("transcript", help="Input transcript JSON file.")
+    p_diarize.add_argument("--audio", required=True, help="Original audio WAV.")
+    p_diarize.add_argument("--library", required=True, help="Voice library JSON path.")
+    p_diarize.add_argument(
+        "--threshold",
+        type=float,
+        default=DEFAULT_THRESHOLD,
+        help="Minimum cosine similarity to label a segment (default 0.90).",
+    )
+    p_diarize.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Re-label segments that already carry a speaker label.",
+    )
+    p_diarize.add_argument("--out", help="Write the labelled transcript to this file.")
+    p_diarize.add_argument("--report-out", help="Write the diarization report to this file.")
+    p_diarize.add_argument(
+        "--report-format",
+        choices=["json", "md"],
+        default="json",
+        help="Diarization report format (default json).",
+    )
 
     p_dub = sub.add_parser("dub", help="Render a dubbed track from a translated transcript.")
     p_dub.add_argument("transcript", help="Translated transcript JSON file.")
@@ -376,6 +409,44 @@ def _cmd_voices(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_diarize(args: argparse.Namespace) -> int:
+    with open(args.transcript, encoding="utf-8") as fh:
+        transcript = Transcript.from_json(fh.read())
+    audio = resample(load_wav(args.audio), DEFAULT_SAMPLE_RATE)
+    library = VoiceLibrary.from_json_file(args.library)
+    labelled, report = diarize_transcript(
+        transcript,
+        audio,
+        library,
+        threshold=args.threshold,
+        overwrite=args.overwrite,
+    )
+    for label in report.labels:
+        speaker = label.speaker or "unknown"
+        similarity = (
+            f" (similarity {label.similarity:.3f})" if label.similarity is not None else ""
+        )
+        print(
+            f"[{label.start:7.2f} - {label.end:7.2f}] {speaker}{similarity} — {label.text}"
+        )
+    print(
+        f"{len(report.labels)} segments: {report.matched} matched, "
+        f"{report.kept} kept, {report.unknown} unknown"
+    )
+    if args.out:
+        with open(args.out, "w", encoding="utf-8") as fh:
+            fh.write(labelled.to_json())
+        print(f"wrote {args.out}")
+    else:
+        print(labelled.to_json())
+    if args.report_out:
+        text = report.to_json() if args.report_format == "json" else report.to_markdown()
+        with open(args.report_out, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        print(f"wrote {args.report_out}")
+    return 0
+
+
 def _cmd_synthesize(args: argparse.Namespace) -> int:
     with open(args.profile, encoding="utf-8") as fh:
         profile = SpeakerProfile.from_json(fh.read())
@@ -536,6 +607,8 @@ def main(argv=None) -> int:
             return _cmd_clone(args)
         if args.command == "voices":
             return _cmd_voices(args)
+        if args.command == "diarize":
+            return _cmd_diarize(args)
         if args.command == "synthesize":
             return _cmd_synthesize(args)
         if args.command == "dub":
@@ -545,6 +618,7 @@ def main(argv=None) -> int:
     except (
         AssemblyError,
         BatchError,
+        DiarizeError,
         ExtractionError,
         TranscriptionError,
         TranslationError,
