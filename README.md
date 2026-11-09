@@ -17,6 +17,7 @@ keeping the speaker's voice.
 - [x] Speaker diarization (label who speaks, from the voice library)
 - [x] Audio enhancement (loudness normalize, hum cut, noise gate, silence trim)
 - [x] Translation fidelity (round-trip back-translation check, flags unstable segments)
+- [x] Project config file (dubber.toml defaults for translate/dub/enhance/diarize)
 - [ ] Self-review checklist, then public
 
 ## Quick start
@@ -115,6 +116,36 @@ video-dubber translate transcript.json --target hi \
   so Hindi back-translation silently returned the input unchanged.
 - Try it without a model: `python examples/demo_translate.py`, and
   `python examples/demo_fidelity.py` for the round-trip check.
+
+## Project config file (dubber.toml)
+
+Pin the flags a project repeats on every command in a `dubber.toml`
+next to the work (or `~/.config/video-dubber/dubber.toml` for user
+defaults; `--config path` overrides the search):
+
+```toml
+[dubber]
+target_language = "hi"
+voice_library = "voices.json"
+bed_level = 0.3
+
+[dubber.enhance]
+target = -16.0
+ceiling = -1.0
+```
+
+```bash
+video-dubber config                    # show the effective configuration
+video-dubber translate transcript.json # --target comes from the file
+video-dubber enhance in.wav --out out.wav  # targets come from the file
+```
+
+Explicit CLI flags always win over the file. Unknown keys, bad types
+and out-of-range values (e.g. `bed_level = 1.5`) fail loudly at load
+time instead of silently doing nothing, and a `--config` path that
+does not exist is an error rather than a quiet fall-back to defaults.
+See `examples/dubber.toml` for the full commented file, and
+`python examples/demo_config.py` for a live run.
 
 ## Voice cloning
 
