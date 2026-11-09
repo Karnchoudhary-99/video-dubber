@@ -51,9 +51,7 @@ def main() -> int:
         segments=[
             Segment(words=_words(["नमस्ते", "दोस्तों"], 0.0, step=0.5), speaker="Asha"),
             Segment(words=_words(["नमस्ते", "आशा"], 2.0, step=0.45), speaker="Ravi"),
-            Segment(
-                words=_words(["चलो", "शुरू", "करते", "हैं"], 4.0, step=0.4), speaker="Asha"
-            ),
+            Segment(words=_words(["चलो", "शुरू", "करते", "हैं"], 4.0, step=0.4), speaker="Asha"),
         ],
         language="hi",
     )

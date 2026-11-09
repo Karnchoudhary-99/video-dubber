@@ -248,12 +248,8 @@ def _two_speaker_transcript() -> Transcript:
 
 class TestMultiSpeakerDub:
     def test_each_speaker_gets_their_own_voice(self):
-        asha = SpeakerProfile(
-            name="Asha", embedding=[0.25] * EMBEDDING_DIM, base_pitch_hz=220.0
-        )
-        ravi = SpeakerProfile(
-            name="Ravi", embedding=[0.1] * EMBEDDING_DIM, base_pitch_hz=110.0
-        )
+        asha = SpeakerProfile(name="Asha", embedding=[0.25] * EMBEDDING_DIM, base_pitch_hz=220.0)
+        ravi = SpeakerProfile(name="Ravi", embedding=[0.1] * EMBEDDING_DIM, base_pitch_hz=110.0)
         default = SpeakerProfile(
             name="Narrator", embedding=[0.2] * EMBEDDING_DIM, base_pitch_hz=150.0
         )
@@ -279,7 +275,9 @@ class TestMultiSpeakerDub:
 
     def test_report_counts_speakers_dubbed(self):
         transcript = _two_speaker_transcript()
-        report = build_report(transcript, [(0.0, 1.0), (2.0, 1.0), (4.0, 1.0)], [1.0] * 3, make_sine(220.0, 5.0))
+        report = build_report(
+            transcript, [(0.0, 1.0), (2.0, 1.0), (4.0, 1.0)], [1.0] * 3, make_sine(220.0, 5.0)
+        )
         assert report.speakers_dubbed == 2
         plain = Transcript(segments=[Segment(words=_words(["solo"], start=0.0))])
         report = build_report(plain, [(0.0, 0.5)], [1.0], make_sine(220.0, 0.5))

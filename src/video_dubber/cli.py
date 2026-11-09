@@ -148,9 +148,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_voices = sub.add_parser("voices", help="List profiles in a voice library.")
     p_voices.add_argument("library", help="Voice library JSON path.")
-    p_voices.add_argument(
-        "--add", help="Profile JSON to add to the library (then list)."
-    )
+    p_voices.add_argument("--add", help="Profile JSON to add to the library (then list).")
     p_voices.add_argument(
         "--overwrite",
         action="store_true",
@@ -367,10 +365,7 @@ def _cmd_voices(args: argparse.Namespace) -> int:
     print(f"{args.library}: {len(library)} voice(s)")
     for name in library.names():
         profile = library.get(name)
-        print(
-            f"  {name}: {profile.base_pitch_hz:.0f} Hz, "
-            f"{profile.speaking_rate_wpm:.0f} wpm"
-        )
+        print(f"  {name}: {profile.base_pitch_hz:.0f} Hz, {profile.speaking_rate_wpm:.0f} wpm")
     return 0
 
 
