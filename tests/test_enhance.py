@@ -78,7 +78,8 @@ def test_high_pass_keeps_speech_and_cuts_hum():
     hum = make_sine(50.0, 1.0, amplitude=0.5)
     assert _rms(high_pass(hum)) <= 0.35 * _rms(hum)
     dc = AudioData([0.4] * 16_000, 16_000)
-    assert _rms(high_pass(dc)) <= 0.01 * _rms(dc)
+    dc_tail = AudioData(high_pass(dc).samples[1600:], 16_000)
+    assert _rms(dc_tail) <= 0.001 * _rms(dc)
     assert high_pass(AudioData([], 16_000)).samples == []
     with pytest.raises(EnhanceError, match="positive"):
         high_pass(speech, cutoff_hz=0.0)
