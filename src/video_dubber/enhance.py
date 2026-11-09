@@ -137,3 +137,116 @@ def normalize_loudness(
             value = math.tanh(value / ceiling) * ceiling
         out.append(value)
     return AudioData(out, audio.sample_rate), gain_db
+
+
+def high_pass(audio: AudioData, cutoff_hz: float = DEFAULT_HIGH_PASS_HZ) -> AudioData:
+    """One-pole high-pass filter — removes rumble/hum below ``cutoff_hz``.
+
+    ``y[n] = a * (y[n-1] + x[n] - x[n-1])`` with ``a`` from the RC time
+    constant. A 440 Hz tone passes essentially untouched while a 50 Hz
+    hum is cut by ~20 dB at the default 80 Hz cutoff.
+    """
+    if cutoff_hz <= 0.0:
+        raise EnhanceError(f"high-pass cutoff must be positive, got {cutoff_hz}")
+    if cutoff_hz >= audio.sample_rate / 2:
+        raise EnhanceError("high-pass cutoff must be below the Nyquist frequency")
+    if not audio.samples:
+        return AudioData([], audio.sample_rate)
+    rc = 1.0 / (2.0 * math.pi * cutoff_hz)
+    dt = 1.0 / audio.sample_rate
+    alpha = rc / (rc + dt)
+    out: list[float] = []
+    prev_in = 0.0
+    prev_out = 0.0
+    for sample in audio.samples:
+        value = alpha * (prev_out + sample - prev_in)
+        out.append(value)
+        prev_in = sample
+        prev_out = value
+    return AudioData(out, audio.sample_rate)
+
+
+def noise_gate(
+    audio: AudioData,
+    threshold_dbfs: float = DEFAULT_GATE_THRESHOLD_DBFS,
+    floor_db: float = DEFAULT_GATE_FLOOR_DB,
+    attack_ms: float = 5.0,
+    release_ms: float = 100.0,
+) -> AudioData:
+    """Attenuate quiet frames to ``floor_db`` instead of cutting them.
+
+    Frames are 10 ms; a frame's RMS decides open vs closed, and the
+    gain envelope moves with attack/release smoothing so the gate never
+    clicks. The floor (default -60 dBFS) keeps gated audio present but
+    inaudible rather than digitally silent, which sounds more natural
+    under a dub.
+    """
+    if threshold_dbfs > 0.0 or floor_db > 0.0:
+        raise EnhanceError("gate threshold and floor must be <= 0 dBFS")
+    if floor_db > threshold_dbfs:
+        raise EnhanceError("gate floor must sit below the threshold")
+    if attack_ms <= 0.0 or release_ms <= 0.0:
+        raise EnhanceError("attack and release must be positive")
+    if not audio.samples:
+        return AudioData([], audio.sample_rate)
+
+    sr = audio.sample_rate
+    frame = max(1, int(sr * 0.010))  # 10 ms frames
+    threshold = 10.0 ** (threshold_dbfs / 20.0)
+    floor_gain = 10.0 ** (floor_db / 20.0)
+    # Per-sample smoothing: attack fast, release slow.
+    attack_coef = 1.0 - math.exp(-1.0 / (sr * attack_ms / 1000.0))
+    release_coef = 1.0 - math.exp(-1.0 / (sr * release_ms / 1000.0))
+
+    out: list[float] = []
+    gain = 1.0
+    for start in range(0, len(audio.samples), frame):
+        chunk = audio.samples[start : start + frame]
+        rms = math.sqrt(sum(s * s for s in chunk) / len(chunk))
+        target = 1.0 if rms >= threshold else floor_gain
+        coef = attack_coef if target > gain else release_coef
+        for sample in chunk:
+            gain += (target - gain) * coef
+            out.append(sample * gain)
+    return AudioData(out, sr)
+
+
+def trim_silence(
+    audio: AudioData,
+    threshold_dbfs: float = DEFAULT_GATE_THRESHOLD_DBFS,
+    margin_s: float = 0.05,
+) -> tuple[AudioData, float]:
+    """Drop leading/trailing silence, keeping a ``margin_s`` cushion.
+
+    Returns ``(audio, trimmed_seconds)``. A frame counts as silence
+    when its 10 ms RMS sits below the threshold. Fully silent audio
+    returns empty audio and the full duration as trimmed.
+    """
+    if threshold_dbfs > 0.0:
+        raise EnhanceError("trim threshold must be <= 0 dBFS")
+    if margin_s < 0.0:
+        raise EnhanceError("trim margin must be >= 0")
+    if not audio.samples:
+        return AudioData([], audio.sample_rate), 0.0
+
+    sr = audio.sample_rate
+    frame = max(1, int(sr * 0.010))
+    threshold = 10.0 ** (threshold_dbfs / 20.0)
+
+    def _frame_is_silent(start: int) -> bool:
+        chunk = audio.samples[start : start + frame]
+        rms = math.sqrt(sum(s * s for s in chunk) / len(chunk))
+        return rms < threshold
+
+    first = 0
+    while first < len(audio.samples) and _frame_is_silent(first):
+        first += frame
+    last = len(audio.samples)
+    while last > first and _frame_is_silent(max(first, last - frame)):
+        last -= frame
+
+    margin = int(margin_s * sr)
+    lo = max(0, first - margin)
+    hi = min(len(audio.samples), last + margin)
+    trimmed = audio.duration - (hi - lo) / sr
+    return AudioData(audio.samples[lo:hi], sr), max(0.0, trimmed)
