@@ -246,6 +246,36 @@ def test_cli_translate_to_hindi_json(tmp_path, capsys):
     assert translated.segments[0].end == 1.0
 
 
+def test_cli_translate_round_trip_reports_fidelity(tmp_path, capsys):
+    transcript = tmp_path / "en.json"
+    _write_transcript(transcript)
+    out = tmp_path / "hi.json"
+    report_path = tmp_path / "fidelity.json"
+    assert (
+        main(
+            [
+                "translate",
+                str(transcript),
+                "--target",
+                "hi",
+                "--out",
+                str(out),
+                "--round-trip",
+                "--fidelity-out",
+                str(report_path),
+            ]
+        )
+        == 0
+    )
+    out_text = capsys.readouterr().out
+    assert "fidelity: verdict good" in out_text
+    assert "mean 1.00" in out_text
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["verdict"] == "good"
+    assert report["mean_score"] == 1.0
+    assert report["segments"][0]["back_text"] == "hello world"
+
+
 def test_cli_translate_srt_with_chunking(tmp_path):
     transcript = tmp_path / "en.json"
     _write_transcript(transcript)

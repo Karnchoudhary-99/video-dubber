@@ -275,3 +275,23 @@ class TestArgosTranslator:
         monkeypatch.setattr(subprocess, "run", lambda *a, **k: Result())
         with pytest.raises(TranslationError, match="package not installed"):
             ArgosTranslator().translate("hello", "en", "hi")
+
+
+class TestDevanagariTokenization:
+    """Regression tests (2026-11-09): the old ``\\w`` tokenizer shattered
+    Devanagari words at combining marks, so Hindi input never translated
+    at all — ``\\b`` never matched around a word ending in a vowel sign."""
+
+    def test_hindi_word_with_vowel_sign_translates_back(self):
+        back = DictionaryTranslator(source="en", target="hi").reversed()
+        assert back.translate("नमस्ते दुनिया", "hi", "en") == "hello world"
+
+    def test_hindi_phrase_with_vowel_signs_translates_back(self):
+        back = DictionaryTranslator(source="en", target="hi").reversed()
+        assert back.translate("सुप्रभात टीम", "hi", "en") == "good morning team"
+
+    def test_reverse_coverage_counts_hindi_words(self):
+        back = DictionaryTranslator(source="en", target="hi").reversed()
+        back.translate("नमस्ते zqxj", "hi", "en")
+        assert back.last_coverage == pytest.approx(0.5)
+        assert back.last_unknown == ["zqxj"]

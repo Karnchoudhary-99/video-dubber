@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -160,7 +161,93 @@ _BUILTIN: dict[tuple[str, str], dict[str, str]] = {
     ("en", "es"): _EN_ES,
 }
 
-_TOKEN_RE = re.compile(r"(\w+(?:'\w+)?|[^\w\s]+|\s+)", re.UNICODE)
+
+def _is_word_char(ch: str) -> bool:
+    """A character that belongs inside a word: letter, mark, number, ``_``.
+
+    Unicode category M (combining marks) matters here: Devanagari vowel
+    signs such as ``े`` are marks, not letters, so ``\\w`` shatters
+    "नमस्ते" into consonant fragments and ``\\b`` never matches around
+    it. Grouping marks with their base letter keeps every script's
+    words whole — the old ``_TOKEN_RE`` broke Hindi back-translation
+    completely (caught by the fidelity tests, 2026-11-09).
+    """
+    return ch == "_" or unicodedata.category(ch)[0] in "LMN"
+
+
+def _tokenize(text: str) -> list[tuple[str, int, int]]:
+    """Split text into ``(token, start, end)`` triples.
+
+    Tokens are runs of word characters (with one internal apostrophe
+    kept, e.g. "let's"), runs of whitespace, or runs of
+    punctuation/symbols. The triples cover the whole string with no
+    gaps, so spans can be mapped back onto the original text.
+    """
+    tokens: list[tuple[str, int, int]] = []
+    index = 0
+    size = len(text)
+    while index < size:
+        ch = text[index]
+        if ch.isspace():
+            end = index + 1
+            while end < size and text[end].isspace():
+                end += 1
+        elif _is_word_char(ch):
+            end = index + 1
+            while end < size:
+                nxt = text[end]
+                if _is_word_char(nxt):
+                    end += 1
+                elif nxt == "'" and end + 1 < size and _is_word_char(text[end + 1]):
+                    end += 2
+                    while end < size and _is_word_char(text[end]):
+                        end += 1
+                else:
+                    break
+        else:
+            end = index + 1
+            while end < size and not text[end].isspace() and not _is_word_char(text[end]):
+                end += 1
+        tokens.append((text[index:end], index, end))
+        index = end
+    return tokens
+
+
+def _find_phrase_spans(
+    text: str,
+    tokens: list[tuple[str, int, int]],
+    phrases: list[str],
+    dictionary: dict[str, str],
+) -> list[tuple[int, int, str]]:
+    """Find non-overlapping phrase occurrences, longest phrase first.
+
+    A phrase matches a run of consecutive word tokens equal to the
+    phrase's words (case-insensitive), separated only by whitespace.
+    Matching on the token stream instead of ``\\b`` regexes is what
+    makes phrases work in scripts whose words end in combining marks.
+    Returns ``(start, end, replacement)`` spans into ``text``.
+    """
+    words = [
+        (token, start, end) for token, start, end in tokens if any(ch.isalnum() for ch in token)
+    ]
+    claimed: list[tuple[int, int]] = []
+    spans: list[tuple[int, int, str]] = []
+    for phrase in phrases:
+        wanted = [word.casefold() for word in phrase.split()]
+        width = len(wanted)
+        for at in range(len(words) - width + 1):
+            run = words[at : at + width]
+            if [token.casefold() for token, _, _ in run] != wanted:
+                continue
+            start, end = run[0][1], run[-1][2]
+            # Only whitespace may sit between the phrase's words.
+            if any(not text[run[i][2] : run[i + 1][1]].isspace() for i in range(width - 1)):
+                continue
+            if any(start < taken_end and taken_start < end for taken_start, taken_end in claimed):
+                continue
+            claimed.append((start, end))
+            spans.append((start, end, dictionary[phrase]))
+    return spans
 
 
 @dataclass
@@ -186,6 +273,15 @@ class DictionaryTranslator:
         self._phrases = sorted(
             (k for k in self.dictionary if " " in k), key=lambda k: -len(k.split())
         )
+        # Coverage counting skips tokens with no ASCII letters only when
+        # the source language itself is ASCII-scripted: there they are
+        # already-translated target text (e.g. a glossary term applied
+        # before this call). When the source script is non-Latin (a
+        # reversed hi -> en table), those tokens ARE the source words
+        # and must count, known or unknown.
+        self._source_is_ascii = bool(self.dictionary) and all(
+            any("a" <= ch.lower() <= "z" for ch in key) for key in self.dictionary
+        )
         self._total_known = 0
         self._total_words = 0
         self._all_unknown: list[str] = []
@@ -201,6 +297,18 @@ class DictionaryTranslator:
         self._all_unknown = []
         self.last_coverage = 0.0
         self.last_unknown = []
+
+    def reversed(self) -> DictionaryTranslator:
+        """Return a translator for the opposite direction (target -> source).
+
+        The table is inverted, so a round trip can be scored. The
+        inversion is lossy where two source words share one target word
+        (``tomorrow``/``yesterday`` both become ``कल``): the later entry
+        wins, and the other word scores low on the round trip — which is
+        exactly what the fidelity check is meant to surface.
+        """
+        inverted = {target: source for source, target in self.dictionary.items()}
+        return DictionaryTranslator(source=self.target, target=self.source, dictionary=inverted)
 
     def supported(self, source: str, target: str) -> bool:
         return (source, target) in _BUILTIN or (
@@ -223,26 +331,23 @@ class DictionaryTranslator:
         # known if it sits inside a matched phrase or in the dictionary.
         # (Measuring after substitution would count translated target words
         # as unknown, since they are not in the source dictionary.)
-        phrase_spans: list[tuple[int, int]] = []
-        for phrase in self._phrases:
-            for match in re.finditer(rf"\b{re.escape(phrase)}\b", text, re.IGNORECASE):
-                phrase_spans.append(match.span())
+        tokens = _tokenize(text)
+        phrase_spans = _find_phrase_spans(text, tokens, self._phrases, self.dictionary)
         known = 0
         total = 0
         unknown: list[str] = []
-        for match in _TOKEN_RE.finditer(text):
-            token = match.group(0)
+        for token, start, end in tokens:
             if token.isspace() or not any(ch.isalnum() for ch in token):
                 continue
             # Tokens with no ASCII letters are already target-language text
             # (e.g. a glossary term applied before this call) or numbers —
             # they are not untranslated source words and do not count.
-            if not any("a" <= ch.lower() <= "z" for ch in token):
+            # (Skipped only for ASCII-scripted sources; see __post_init__.)
+            if self._source_is_ascii and not any("a" <= ch.lower() <= "z" for ch in token):
                 continue
             total += 1
-            span = match.span()
-            covered = any(s <= span[0] and span[1] <= e for s, e in phrase_spans)
-            if covered or token.lower() in self.dictionary:
+            covered = any(s <= start and end <= e for s, e, _ in phrase_spans)
+            if covered or token.casefold() in self.dictionary:
                 known += 1
             else:
                 unknown.append(token)
@@ -257,20 +362,20 @@ class DictionaryTranslator:
         if self._total_words:
             self.last_coverage = self._total_known / self._total_words
         self.last_unknown = list(self._all_unknown)
-        # 1. Phrase substitution (longest first, case-insensitive, word
-        #    boundaries). Already-translated phrases are not in the source
-        #    dictionary, so step 2 leaves them untouched.
+        # 1. Phrase substitution (longest first, word boundaries via the
+        # token stream). Already-translated phrases are not in the source
+        # dictionary, so step 2 leaves them untouched. Spans are applied
+        # right-to-left so earlier offsets stay valid.
         work = text
-        for phrase in self._phrases:
-            pattern = re.compile(rf"\b{re.escape(phrase)}\b", re.IGNORECASE)
-            work = pattern.sub(self.dictionary[phrase], work)
+        for start, end, replacement in sorted(phrase_spans, reverse=True):
+            work = work[:start] + replacement + work[end:]
         # 2. Word-by-word lookup with case preservation.
         out: list[str] = []
-        for token in _TOKEN_RE.findall(work):
+        for token, _, _ in _tokenize(work):
             if token.isspace() or not any(ch.isalnum() for ch in token):
                 out.append(token)
                 continue
-            replacement = self.dictionary.get(token.lower())
+            replacement = self.dictionary.get(token.casefold())
             out.append(_match_case(token, replacement) if replacement else token)
         return re.sub(r" {2,}", " ", "".join(out)).strip()
 
