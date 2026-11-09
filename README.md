@@ -15,6 +15,7 @@ keeping the speaker's voice.
 - [x] Multi-speaker dubbing, voice library, subtitle export
 - [x] Background-music bed (extract, duck, mix under the dub)
 - [x] Speaker diarization (label who speaks, from the voice library)
+- [x] Audio enhancement (loudness normalize, hum cut, noise gate, silence trim)
 - [ ] Self-review checklist, then public
 
 ## Quick start
@@ -248,8 +249,41 @@ video-dubber dub translated.json --profile asha.json \
   `bed_level` (video jobs only). The report records the bed level.
   `video_dubber.bed` also offers `duck_bed` for externally supplied
   music: attenuate a music track under the placed dubbed clips.
+- **Enhancement** (`--enhance`): clean up the finished dub track —
+  hum cut, room-noise gate, loudness normalized to −16 dBFS RMS with
+  a −1 dBFS peak ceiling. Trimming is disabled here on purpose: the
+  dub sits on a timed bed, so its duration and segment start times
+  must not move. The enhancement numbers land in the quality report.
+  In batch manifests the same key is `enhance`. See the next section
+  for the standalone command.
 - Full pipeline in one go: `python examples/demo_dub.py`. Bed demo:
   `python examples/demo_bed.py`.
+
+## Audio enhancement
+
+Clean up any WAV — a raw recording or a finished dub — before it ships:
+
+```bash
+video-dubber enhance raw.wav --out clean.wav --report-out enhance.md
+```
+
+- **Trim**: leading/trailing silence is dropped (50 ms margin kept), so
+  files start on the first word. `--no-trim` keeps the duration
+  untouched — use it for timed dub tracks.
+- **High-pass** (`--high-pass 80`, Hz, 0 disables): two cascaded
+  one-pole stages (12 dB/octave) remove rumble and mains hum below
+  the cutoff; a 440 Hz tone passes within 0.5 dB while 50 Hz hum is
+  cut to ~0.28×.
+- **Noise gate** (`--gate -45`, dBFS): 10 ms frames below the threshold
+  are pushed down to a −60 dBFS floor with attack/release smoothing,
+  so pauses go quiet without clicking.
+- **Normalize** (`--target -16`, `--ceiling -1`, dBFS): gain to the
+  target RMS; the gain is capped so the peak lands on the ceiling,
+  and anything still above it is tanh soft-limited instead of clipped.
+- The report prints before/after RMS and peak, gain applied and
+  seconds trimmed. Demo: `python examples/demo_enhance.py` — a quiet
+  voice under room hum goes from −32 to −16 dBFS with 0.90 s trimmed,
+  and the timed variant keeps its 2.00 s duration.
 
 ## Batch mode
 
@@ -294,7 +328,11 @@ Audio extraction + transcription are done (62 tests). Translation is done
 (147 tests). Batch mode + quality metrics are done (185 tests).
 Multi-speaker dubbing, voice library and subtitle export are done
 (206 tests). Background-music bed preservation is done (228 tests).
-Speaker diarization is done (243 tests). Remaining: the self-review checklist and public flip — the
+Speaker diarization is done (243 tests). Audio enhancement is done
+(255 tests): loudness normalize with soft limiter, hum high-pass,
+noise gate, silence trim, `enhance` CLI, `dub --enhance` and batch
+`enhance`, with before/after numbers in the quality report. Remaining:
+the self-review checklist and public flip — the
 project stays private per the 5–7 day pace rule (started 2026-11-08,
 earliest completion 2026-11-13).
 
