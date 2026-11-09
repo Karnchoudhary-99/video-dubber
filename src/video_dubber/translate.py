@@ -202,6 +202,20 @@ class DictionaryTranslator:
         self.last_coverage = 0.0
         self.last_unknown = []
 
+    def reversed(self) -> DictionaryTranslator:
+        """Return a translator for the opposite direction (target -> source).
+
+        The table is inverted, so a round trip can be scored. The
+        inversion is lossy where two source words share one target word
+        (``tomorrow``/``yesterday`` both become ``कल``): the later entry
+        wins, and the other word scores low on the round trip — which is
+        exactly what the fidelity check is meant to surface.
+        """
+        inverted = {target: source for source, target in self.dictionary.items()}
+        return DictionaryTranslator(
+            source=self.target, target=self.source, dictionary=inverted
+        )
+
     def supported(self, source: str, target: str) -> bool:
         return (source, target) in _BUILTIN or (
             self.source == source and self.target == target and bool(self.dictionary)
