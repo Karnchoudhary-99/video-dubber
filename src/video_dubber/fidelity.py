@@ -197,3 +197,56 @@ class FidelityReport:
             "correct — unknown words pass through untouched both ways._"
         )
         return "\n".join(lines) + "\n"
+
+
+def check_fidelity(
+    source_transcript: Transcript,
+    translated_transcript: Transcript,
+    translator: Translator,
+    target: str,
+    source: str | None = None,
+    threshold: float = 0.6,
+) -> FidelityReport:
+    """Score the round-trip stability of a translated transcript.
+
+    ``translated_transcript`` must be the translation of
+    ``source_transcript`` (same segment count, same order) — the CLI
+    passes the transcript it just translated, so no work is repeated.
+    Each translated segment is translated back to the source language
+    and compared with the original segment text; segments scoring
+    below ``threshold`` are flagged. Raises :class:`FidelityError`
+    for a mismatched segment count or an unreversible translator, and
+    :class:`ValueError` for a threshold outside ``[0, 1]``.
+    """
+    if not 0.0 <= threshold <= 1.0:
+        raise ValueError(f"threshold must be between 0 and 1, got {threshold}")
+    if len(source_transcript.segments) != len(translated_transcript.segments):
+        raise FidelityError(
+            "segment count mismatch: source has "
+            f"{len(source_transcript.segments)} segments, translated has "
+            f"{len(translated_transcript.segments)}"
+        )
+    src = source or source_transcript.language or "en"
+    back = reverse_translator(translator)
+    report = FidelityReport(
+        source=src, target=target, backend=translator.name, threshold=threshold
+    )
+    for index, (original, translated) in enumerate(
+        zip(source_transcript.segments, translated_transcript.segments)
+    ):
+        if not translated.text.strip():
+            score, back_text = 1.0, ""
+        else:
+            back_text = back.translate(translated.text, target, src)
+            score = word_jaccard(original.text, back_text)
+        report.segments.append(
+            SegmentFidelity(
+                index=index,
+                source_text=original.text,
+                translated_text=translated.text,
+                back_text=back_text,
+                score=score,
+                flagged=score < threshold,
+            )
+        )
+    return report
