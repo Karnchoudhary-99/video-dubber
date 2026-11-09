@@ -113,8 +113,7 @@ def load_config(path: str | Path | None = None) -> DubberConfig:
         raise ConfigError(f"cannot read config file {found}: {exc}") from exc
     if not isinstance(raw, dict) or set(raw) - {"dubber"}:
         raise ConfigError(
-            f"{found}: top level must contain only a [dubber] table, "
-            f"got keys {sorted(raw)}"
+            f"{found}: top level must contain only a [dubber] table, got keys {sorted(raw)}"
         )
     config = _parse_dubber(raw.get("dubber") or {})
     config.path = found
@@ -143,17 +142,13 @@ def _parse_dubber(table: dict) -> DubberConfig:
     if "backend" in table:
         config.backend = _require_str(table, "backend")
         if config.backend not in ("dictionary", "argos"):
-            raise ConfigError(
-                f"backend must be 'dictionary' or 'argos', got {config.backend!r}"
-            )
+            raise ConfigError(f"backend must be 'dictionary' or 'argos', got {config.backend!r}")
     if "voice_library" in table:
         config.voice_library = _require_str(table, "voice_library")
     if "bed_level" in table:
         config.bed_level = _require_number(table, "bed_level")
         if not 0.0 <= config.bed_level <= 1.0:
-            raise ConfigError(
-                f"bed_level must be between 0 and 1, got {config.bed_level}"
-            )
+            raise ConfigError(f"bed_level must be between 0 and 1, got {config.bed_level}")
     if "enhance" in table:
         config.enhance = _parse_enhance(table["enhance"])
     return config
@@ -169,11 +164,10 @@ def _parse_enhance(table: dict) -> EnhanceConfig:
     enhance = EnhanceConfig()
     for key in known:
         if key in table:
-            setattr(enhance, key, _require_number(table, f"enhance.{key}"))
+            setattr(enhance, key, _require_number(table, key))
     if enhance.ceiling < enhance.target:
         raise ConfigError(
-            "enhance.ceiling "
-            f"({enhance.ceiling}) must be >= enhance.target ({enhance.target})"
+            f"enhance.ceiling ({enhance.ceiling}) must be >= enhance.target ({enhance.target})"
         )
     return enhance
 
