@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 
 from video_dubber.assemble import build_report, dub_transcript, mux_audio
 from video_dubber.audio import DEFAULT_SAMPLE_RATE, load_wav, resample, save_wav
+from video_dubber.enhance import enhance_audio
 from video_dubber.extract import extract_audio
 from video_dubber.quality import wer_from_transcripts
 from video_dubber.transcribe import (
@@ -60,6 +61,7 @@ _JOB_KEYS = frozenset(_PATH_FIELDS) | {
     "model",
     "profiles",
     "bed_level",
+    "enhance",
 }
 _DEFAULT_KEYS = _JOB_KEYS - {"name"}
 
@@ -87,6 +89,7 @@ class BatchJob:
     mux: bool = True
     profiles: dict[str, str] | None = None  # speaker name -> profile JSON path
     bed_level: float | None = None  # keep the video's music bed under the dub (0-1)
+    enhance: bool = False  # enhance the finished dub track (no trimming: timing preserved)
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -304,6 +307,11 @@ def run_job(
             profiles=_load_profiles(job.profiles),
             bed_level=job.bed_level,
         )
+        enhancement = None
+        if job.enhance:
+            # trim=False: the dub sits on a timed bed, so its duration
+            # and segment start times must not move.
+            dub_audio, enhancement = enhance_audio(dub_audio, trim=False)
         save_wav(dubbed_wav, dub_audio)
         report = build_report(
             translated,
@@ -313,6 +321,7 @@ def run_job(
             original,
             translation_coverage=translator.last_coverage,
             bed_level=job.bed_level,
+            enhancement=enhancement,
         )
         outputs = {"dubbed_wav": dubbed_wav}
         if job.video is not None and job.mux:

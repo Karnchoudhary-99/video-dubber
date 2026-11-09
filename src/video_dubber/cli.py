@@ -16,6 +16,8 @@ Subcommands (see ``video-dubber <cmd> --help`` for details):
 * ``synthesize`` — render text as audio in a cloned voice (demo synthesis).
 * ``dub`` — render a full dubbed track from a translated transcript and
   a speaker profile, with a quality report (and optional video mux).
+* ``enhance`` — clean up a WAV: trim silence, cut hum, gate room noise,
+  normalize loudness to a target RMS.
 * ``batch`` — dub many videos/transcripts from one manifest JSON file.
 """
 
@@ -40,6 +42,13 @@ from video_dubber.diarize import (
     DEFAULT_THRESHOLD,
     DiarizeError,
     diarize_transcript,
+)
+from video_dubber.enhance import (
+    DEFAULT_CEILING_DBFS,
+    DEFAULT_GATE_THRESHOLD_DBFS,
+    DEFAULT_HIGH_PASS_HZ,
+    DEFAULT_TARGET_DBFS,
+    enhance_audio,
 )
 from video_dubber.extract import ExtractionError, extract_audio
 from video_dubber.transcribe import (
@@ -224,11 +233,53 @@ def build_parser() -> argparse.ArgumentParser:
         "say; enables WER in the quality report.",
     )
     p_dub.add_argument(
+        "--enhance",
+        action="store_true",
+        help="Enhance the finished dub track (hum cut, noise gate, loudness "
+        "normalize to -16 dBFS); timing is preserved, no trimming.",
+    )
+    p_dub.add_argument(
         "--report-format",
         choices=["json", "md"],
         default="json",
         help="Quality report format (default json).",
     )
+
+    p_enhance = sub.add_parser(
+        "enhance", help="Clean up a WAV file (trim, de-hum, gate, normalize)."
+    )
+    p_enhance.add_argument("input", help="Input WAV file.")
+    p_enhance.add_argument("--out", required=True, help="Output WAV path.")
+    p_enhance.add_argument(
+        "--target",
+        type=float,
+        default=DEFAULT_TARGET_DBFS,
+        help=f"Target RMS in dBFS (default {DEFAULT_TARGET_DBFS}).",
+    )
+    p_enhance.add_argument(
+        "--ceiling",
+        type=float,
+        default=DEFAULT_CEILING_DBFS,
+        help=f"Peak ceiling in dBFS (default {DEFAULT_CEILING_DBFS}).",
+    )
+    p_enhance.add_argument(
+        "--high-pass",
+        type=float,
+        default=DEFAULT_HIGH_PASS_HZ,
+        help=f"High-pass cutoff in Hz, 0 disables (default {DEFAULT_HIGH_PASS_HZ}).",
+    )
+    p_enhance.add_argument(
+        "--gate",
+        type=float,
+        default=DEFAULT_GATE_THRESHOLD_DBFS,
+        help=f"Noise-gate threshold in dBFS (default {DEFAULT_GATE_THRESHOLD_DBFS}).",
+    )
+    p_enhance.add_argument(
+        "--no-trim",
+        action="store_true",
+        help="Keep leading/trailing silence (needed for timed dub tracks).",
+    )
+    p_enhance.add_argument("--report-out", help="Write the enhancement report (Markdown) here.")
 
     p_batch = sub.add_parser("batch", help="Dub many jobs from a manifest JSON file.")
     p_batch.add_argument("manifest", help="Manifest JSON file (see README for the format).")
@@ -516,6 +567,11 @@ def _cmd_dub(args: argparse.Namespace) -> int:
         profiles=profiles,
         bed_level=args.bed_level,
     )
+    enhancement = None
+    if args.enhance:
+        # trim=False: the dub sits on a timed bed, so its duration and
+        # segment start times must not move.
+        dub_audio, enhancement = enhance_audio(dub_audio, trim=False)
     save_wav(args.out, dub_audio)
     report = build_report(
         transcript,
@@ -525,6 +581,7 @@ def _cmd_dub(args: argparse.Namespace) -> int:
         original,
         reference_transcript=reference,
         bed_level=args.bed_level,
+        enhancement=enhancement,
     )
     print(f"dubbed {report.segments_dubbed} segments, {dub_audio.duration:.2f}s -> {args.out}")
     print(
@@ -536,6 +593,12 @@ def _cmd_dub(args: argparse.Namespace) -> int:
         print(f"word error rate vs reference: {report.word_error_rate:.3f}")
     if report.bed_level is not None:
         print(f"background bed level: {report.bed_level:.2f}")
+    if enhancement is not None:
+        print(
+            f"enhanced: RMS {enhancement.before.rms_dbfs:.1f} -> "
+            f"{enhancement.after.rms_dbfs:.1f} dBFS "
+            f"(gain {enhancement.gain_db:+.1f} dB)"
+        )
     if args.report_out:
         text = report.to_json() if args.report_format == "json" else report.to_markdown()
         with open(args.report_out, "w", encoding="utf-8") as fh:
@@ -555,6 +618,26 @@ def _cmd_dub(args: argparse.Namespace) -> int:
     if args.video:
         mux_audio(args.video, args.out, args.mux_out)
         print(f"muxed dub into {args.mux_out}")
+    return 0
+
+
+def _cmd_enhance(args: argparse.Namespace) -> int:
+    audio = load_wav(args.input)
+    enhanced, report = enhance_audio(
+        audio,
+        target_dbfs=args.target,
+        ceiling_dbfs=args.ceiling,
+        high_pass_hz=args.high_pass,
+        gate_threshold_dbfs=args.gate,
+        trim=not args.no_trim,
+    )
+    save_wav(args.out, enhanced)
+    print(report.to_markdown(), end="")
+    print(f"wrote {args.out} ({enhanced.duration:.2f}s)")
+    if args.report_out:
+        with open(args.report_out, "w", encoding="utf-8") as fh:
+            fh.write(report.to_markdown())
+        print(f"wrote {args.report_out}")
     return 0
 
 
@@ -607,6 +690,8 @@ def main(argv=None) -> int:
             return _cmd_synthesize(args)
         if args.command == "dub":
             return _cmd_dub(args)
+        if args.command == "enhance":
+            return _cmd_enhance(args)
         if args.command == "batch":
             return _cmd_batch(args)
     except (

@@ -19,3 +19,4 @@ jobs:
       - run: python examples/demo_multispeaker.py
       - run: python examples/demo_bed.py
       - run: python examples/demo_diarize.py
+      - run: python examples/demo_enhance.py
