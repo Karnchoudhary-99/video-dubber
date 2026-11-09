@@ -53,9 +53,7 @@ class TestDiarizeTranscript:
     def test_unknown_voice_is_not_mislabelled(self):
         # 330 Hz is in neither profile (0.79-0.86 from both) -> unknown.
         audio = concat(make_sine(330.0, 1.0), make_sine(330.0, 1.0))
-        labelled, report = diarize_transcript(
-            _two_speaker_transcript(), audio, _library()
-        )
+        labelled, report = diarize_transcript(_two_speaker_transcript(), audio, _library())
         assert [s.speaker for s in labelled.segments] == [None, None]
         assert report.matched == 0
         assert report.unknown == 2
@@ -63,9 +61,7 @@ class TestDiarizeTranscript:
 
     def test_silent_segment_is_unknown_not_an_error(self):
         audio = concat(make_sine(220.0, 1.0), make_silence(1.0))
-        labelled, report = diarize_transcript(
-            _two_speaker_transcript(), audio, _library()
-        )
+        labelled, report = diarize_transcript(_two_speaker_transcript(), audio, _library())
         assert labelled.segments[0].speaker == "Asha"
         assert labelled.segments[1].speaker is None
         assert report.labels[1].status == "silent"
@@ -73,18 +69,14 @@ class TestDiarizeTranscript:
 
     def test_empty_segment_is_skipped_as_silent(self):
         transcript = Transcript(segments=[Segment(words=[]), _two_speaker_transcript().segments[0]])
-        labelled, report = diarize_transcript(
-            transcript, _two_speaker_audio(), _library()
-        )
+        labelled, report = diarize_transcript(transcript, _two_speaker_audio(), _library())
         assert report.labels[0].status == "silent"
         assert labelled.segments[1].speaker == "Asha"
 
     def test_existing_labels_are_kept_unless_overwrite(self):
         transcript = _two_speaker_transcript()
         transcript.segments[0].speaker = "Ravi"  # wrong label, must survive
-        labelled, report = diarize_transcript(
-            transcript, _two_speaker_audio(), _library()
-        )
+        labelled, report = diarize_transcript(transcript, _two_speaker_audio(), _library())
         assert labelled.segments[0].speaker == "Ravi"
         assert report.labels[0].status == "kept"
         assert report.kept == 1
@@ -104,20 +96,14 @@ class TestDiarizeTranscript:
             segments=[Segment(words=[Word("hello", 0.0, 0.5), Word("mars", 0.5, 1.0)])]
         )
         audio = make_sine(330.0, 1.0)
-        labelled, _ = diarize_transcript(
-            transcript, audio, _library(), threshold=0.80
-        )
+        labelled, _ = diarize_transcript(transcript, audio, _library(), threshold=0.80)
         assert labelled.segments[0].speaker == "Asha"
-        labelled, _ = diarize_transcript(
-            transcript, audio, _library(), threshold=0.90
-        )
+        labelled, _ = diarize_transcript(transcript, audio, _library(), threshold=0.90)
         assert labelled.segments[0].speaker is None
 
     def test_empty_library_and_bad_threshold_raise(self):
         with pytest.raises(DiarizeError, match="empty voice library"):
-            diarize_transcript(
-                _two_speaker_transcript(), _two_speaker_audio(), VoiceLibrary()
-            )
+            diarize_transcript(_two_speaker_transcript(), _two_speaker_audio(), VoiceLibrary())
         with pytest.raises(DiarizeError, match="threshold must be in"):
             diarize_transcript(
                 _two_speaker_transcript(), _two_speaker_audio(), _library(), threshold=1.5
@@ -133,9 +119,7 @@ class TestDiarizeTranscript:
 
 class TestDiarizationReport:
     def test_json_round_trip_and_markdown(self):
-        _, report = diarize_transcript(
-            _two_speaker_transcript(), _two_speaker_audio(), _library()
-        )
+        _, report = diarize_transcript(_two_speaker_transcript(), _two_speaker_audio(), _library())
         raw = json.loads(report.to_json())
         assert raw["labels"][0]["speaker"] == "Asha"
         assert raw["labels"][1]["speaker"] == "Ravi"
@@ -145,8 +129,13 @@ class TestDiarizationReport:
 
     def test_report_dataclass_shape(self):
         label = SegmentLabel(
-            index=0, speaker="Asha", similarity=0.99, status="matched",
-            start=0.0, end=1.0, text="hello mars",
+            index=0,
+            speaker="Asha",
+            similarity=0.99,
+            status="matched",
+            start=0.0,
+            end=1.0,
+            text="hello mars",
         )
         report = DiarizationReport(labels=[label])
         assert report.matched == 1

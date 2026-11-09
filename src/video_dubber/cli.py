@@ -169,9 +169,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_synth.add_argument("--semitones", type=float, default=0.0, help="Pitch shift in semitones.")
     p_synth.add_argument("--out", required=True, help="Output WAV path.")
 
-    p_diarize = sub.add_parser(
-        "diarize", help="Label who speaks in each transcript segment."
-    )
+    p_diarize = sub.add_parser("diarize", help="Label who speaks in each transcript segment.")
     p_diarize.add_argument("transcript", help="Input transcript JSON file.")
     p_diarize.add_argument("--audio", required=True, help="Original audio WAV.")
     p_diarize.add_argument("--library", required=True, help="Voice library JSON path.")
@@ -423,12 +421,8 @@ def _cmd_diarize(args: argparse.Namespace) -> int:
     )
     for label in report.labels:
         speaker = label.speaker or "unknown"
-        similarity = (
-            f" (similarity {label.similarity:.3f})" if label.similarity is not None else ""
-        )
-        print(
-            f"[{label.start:7.2f} - {label.end:7.2f}] {speaker}{similarity} — {label.text}"
-        )
+        similarity = f" (similarity {label.similarity:.3f})" if label.similarity is not None else ""
+        print(f"[{label.start:7.2f} - {label.end:7.2f}] {speaker}{similarity} — {label.text}")
     print(
         f"{len(report.labels)} segments: {report.matched} matched, "
         f"{report.kept} kept, {report.unknown} unknown"

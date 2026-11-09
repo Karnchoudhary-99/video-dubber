@@ -78,9 +78,7 @@ class DiarizationReport:
 
     @property
     def unknown(self) -> int:
-        return sum(
-            1 for label in self.labels if label.status in ("unknown", "silent")
-        )
+        return sum(1 for label in self.labels if label.status in ("unknown", "silent"))
 
     @property
     def kept(self) -> int:
@@ -102,20 +100,19 @@ class DiarizationReport:
         lines = [
             "# Diarization report",
             "",
-            f"{len(self.labels)} segments: {self.matched} matched, "
-            f"{self.kept} kept, {self.unknown} unknown.",
+            (
+                f"{len(self.labels)} segments: {self.matched} matched, "
+                f"{self.kept} kept, {self.unknown} unknown."
+            ),
             "",
         ]
         for label in self.labels:
             speaker = label.speaker or "unknown"
             similarity = (
-                f" (similarity {label.similarity:.3f})"
-                if label.similarity is not None
-                else ""
+                f" (similarity {label.similarity:.3f})" if label.similarity is not None else ""
             )
             lines.append(
-                f"- [{label.start:7.2f} - {label.end:7.2f}] "
-                f"{speaker}{similarity} — {label.text}"
+                f"- [{label.start:7.2f} - {label.end:7.2f}] {speaker}{similarity} — {label.text}"
             )
         return "\n".join(lines) + "\n"
 
@@ -129,7 +126,7 @@ def _best_match(
         score = cosine_similarity(embedding, library.get(name).embedding)
         if score > best_score:
             best_name, best_score = name, score
-    return best_name, best_score if best_name is not None else best_score
+    return best_name, best_score
 
 
 def diarize_transcript(

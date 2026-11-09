@@ -858,7 +858,7 @@ def test_cli_diarize_labels_segments(tmp_path, capsys):
 
 
 def test_cli_diarize_keeps_existing_label_without_overwrite(tmp_path, capsys):
-    from video_dubber.transcript import Segment, Transcript, Word
+    from video_dubber.transcript import Transcript
 
     audio, transcript_path, library_path = _make_diarize_fixtures(tmp_path)
     transcript = Transcript.from_json(transcript_path.read_text(encoding="utf-8"))
