@@ -741,6 +741,67 @@ def test_cli_dub_html_report(tmp_path, capsys):
     assert "Segments dubbed" in text
 
 
+def _write_dub_report_json(tmp_path):
+    """Dub the fixture transcript and return the saved JSON report path."""
+    transcript = tmp_path / "hi.json"
+    _write_dub_transcript(transcript)
+    profile = tmp_path / "dub.json"
+    _write_dub_profile(profile)
+    report = tmp_path / "report.json"
+    assert (
+        main(
+            [
+                "dub",
+                str(transcript),
+                "--profile",
+                str(profile),
+                "--out",
+                str(tmp_path / "dub.wav"),
+                "--report-out",
+                str(report),
+            ]
+        )
+        == 0
+    )
+    return report
+
+
+def test_cli_report_renders_saved_json_as_html(tmp_path, capsys):
+    report = _write_dub_report_json(tmp_path)
+    out = tmp_path / "report.html"
+    assert main(["report", str(report), "--out", str(out)]) == 0
+    assert f"wrote {out}" in capsys.readouterr().out
+    text = out.read_text(encoding="utf-8")
+    assert "<!DOCTYPE html>" in text
+    assert 'class="banner good"' in text
+    assert "<h2>Segments</h2>" in text
+
+
+def test_cli_report_prints_to_stdout_by_default(tmp_path, capsys):
+    report = _write_dub_report_json(tmp_path)
+    assert main(["report", str(report)]) == 0
+    assert "<!DOCTYPE html>" in capsys.readouterr().out
+
+
+def test_cli_report_markdown_format(tmp_path, capsys):
+    report = _write_dub_report_json(tmp_path)
+    out = tmp_path / "report.md"
+    assert main(["report", str(report), "--format", "md", "--out", str(out)]) == 0
+    assert "# Dub quality report" in out.read_text(encoding="utf-8")
+
+
+def test_cli_report_bad_json_fails(tmp_path, capsys):
+    bad = tmp_path / "bad.json"
+    bad.write_text("not json", encoding="utf-8")
+    assert main(["report", str(bad)]) == 1
+    assert "error:" in capsys.readouterr().err
+
+
+def test_cli_report_missing_file_fails(tmp_path, capsys):
+    assert main(["report", str(tmp_path / "nope.json")]) == 1
+    assert "error:" in capsys.readouterr().err
+
+
 def test_cli_dub_with_bed_level(tmp_path, capsys):
     transcript = tmp_path / "hi.json"
     _write_dub_transcript(transcript)

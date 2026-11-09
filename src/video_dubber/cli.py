@@ -16,6 +16,7 @@ Subcommands (see ``video-dubber <cmd> --help`` for details):
 * ``synthesize`` — render text as audio in a cloned voice (demo synthesis).
 * ``dub`` — render a full dubbed track from a translated transcript and
   a speaker profile, with a quality report (and optional video mux).
+* ``report`` — re-render a saved JSON quality report as HTML or Markdown.
 * ``enhance`` — clean up a WAV: trim silence, cut hum, gate room noise,
   normalize loudness to a target RMS.
 * ``batch`` — dub many videos/transcripts from one manifest JSON file.
@@ -28,6 +29,7 @@ import sys
 from video_dubber import __version__
 from video_dubber.assemble import (
     AssemblyError,
+    DubReport,
     build_report,
     dub_transcript,
     mux_audio,
@@ -282,6 +284,19 @@ def build_parser() -> argparse.ArgumentParser:
         default="json",
         help="Quality report format (default json).",
     )
+
+    p_report = sub.add_parser(
+        "report",
+        help="Re-render a saved JSON quality report as HTML or Markdown.",
+    )
+    p_report.add_argument("input", help="Saved dub report JSON file (from dub --report-out).")
+    p_report.add_argument(
+        "--format",
+        choices=["json", "md", "html"],
+        default="html",
+        help="Output format (default html).",
+    )
+    p_report.add_argument("--out", help="Write the re-rendered report here (default: print).")
 
     p_enhance = sub.add_parser(
         "enhance", help="Clean up a WAV file (trim, de-hum, gate, normalize)."
@@ -789,6 +804,24 @@ def _cmd_dub(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_report(args: argparse.Namespace) -> int:
+    with open(args.input, encoding="utf-8") as fh:
+        report = DubReport.from_json(fh.read())
+    formats = {
+        "json": report.to_json(),
+        "md": report.to_markdown(),
+        "html": render_html_report(report),
+    }
+    text = formats[args.format]
+    if args.out:
+        with open(args.out, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        print(f"wrote {args.out}")
+    else:
+        print(text, end="")
+    return 0
+
+
 def _cmd_enhance(args: argparse.Namespace) -> int:
     config = _load_config(args)
     if config is None:
@@ -865,6 +898,8 @@ def main(argv=None) -> int:
             return _cmd_synthesize(args)
         if args.command == "dub":
             return _cmd_dub(args)
+        if args.command == "report":
+            return _cmd_report(args)
         if args.command == "enhance":
             return _cmd_enhance(args)
         if args.command == "batch":
