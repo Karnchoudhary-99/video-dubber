@@ -1,0 +1,22 @@
+# Example dubber.toml — copy to your project directory as "dubber.toml"
+# (or pass it explicitly with `video-dubber --config path/to/dubber.toml`).
+# Every key is optional; explicit CLI flags always win over the file.
+
+[dubber]
+# Default target language for `translate` (so --target can be omitted).
+target_language = "hi"
+# Default source language when a transcript carries none.
+source_language = "en"
+# Translation backend: "dictionary" (offline) or "argos".
+backend = "dictionary"
+# Default voice library for `clone --library` and `diarize`.
+voice_library = "voices.json"
+# Default music-bed mix level for `dub` (0-1; needs --original).
+bed_level = 0.3
+
+[dubber.enhance]
+# Defaults for `enhance` (dBFS / Hz).
+target = -16.0
+ceiling = -1.0
+high_pass = 80.0
+gate = -45.0
