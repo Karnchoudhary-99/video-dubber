@@ -1799,3 +1799,111 @@ def test_cli_watch_extensions_filter(tmp_path, capsys):
     assert main(_watch_args(watch, script, profile, out, ["--extensions", "wav"])) == 0
     assert (out / "morning-clip" / "dubbed.wav").exists()
     assert "scan 1: 1 new" in capsys.readouterr().out
+
+
+def _write_clipped_wav(path):
+    from video_dubber.audio import AudioData
+
+    save_wav(str(path), AudioData([1.0] * 32_000, 16_000))
+
+
+def _write_quiet_wav(path):
+    save_wav(
+        str(path),
+        concat(
+            make_sine(440.0, 1.0, amplitude=0.05),
+            make_silence(1.0),
+            make_sine(440.0, 1.0, amplitude=0.05),
+            make_silence(1.0),
+        ),
+    )
+
+
+def test_cli_preflight_clean_passes(tmp_path, capsys):
+    wav = tmp_path / "clean.wav"
+    _make_wav(wav)
+    assert main(["preflight", str(wav)]) == 0
+    assert "pass" in capsys.readouterr().out
+
+
+def test_cli_preflight_clipped_fails(tmp_path, capsys):
+    wav = tmp_path / "clipped.wav"
+    _write_clipped_wav(wav)
+    assert main(["preflight", str(wav)]) == 1
+    assert "FAIL" in capsys.readouterr().out
+
+
+def test_cli_preflight_json_output(tmp_path, capsys):
+    wav = tmp_path / "clean.wav"
+    _make_wav(wav)
+    assert main(["preflight", str(wav), "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["verdict"] == "pass"
+    assert len(data["checks"]) == 8
+
+
+def test_cli_preflight_fail_on_warn(tmp_path, capsys):
+    wav = tmp_path / "quiet.wav"
+    _write_quiet_wav(wav)
+    assert main(["preflight", str(wav)]) == 0  # warnings alone pass
+    assert main(["preflight", str(wav), "--fail-on-warn"]) == 1
+
+
+def test_cli_preflight_missing_file(tmp_path, capsys):
+    assert main(["preflight", str(tmp_path / "nope.wav")]) == 1
+    assert "error" in capsys.readouterr().err
+
+
+def test_cli_dub_preflight_gate_aborts(tmp_path, capsys):
+    transcript = tmp_path / "hi.json"
+    _write_dub_transcript(transcript)
+    profile = tmp_path / "dub.json"
+    _write_dub_profile(profile)
+    original = tmp_path / "clipped.wav"
+    _write_clipped_wav(original)
+    out = tmp_path / "dub.wav"
+    assert (
+        main(
+            [
+                "dub",
+                str(transcript),
+                "--profile",
+                str(profile),
+                "--original",
+                str(original),
+                "--preflight",
+                "--out",
+                str(out),
+            ]
+        )
+        == 1
+    )
+    assert "dub aborted" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_cli_dub_preflight_gate_passes(tmp_path, capsys):
+    transcript = tmp_path / "hi.json"
+    _write_dub_transcript(transcript)
+    profile = tmp_path / "dub.json"
+    _write_dub_profile(profile)
+    original = tmp_path / "clean.wav"
+    _make_wav(original)
+    out = tmp_path / "dub.wav"
+    assert (
+        main(
+            [
+                "dub",
+                str(transcript),
+                "--profile",
+                str(profile),
+                "--original",
+                str(original),
+                "--preflight",
+                "--out",
+                str(out),
+            ]
+        )
+        == 0
+    )
+    assert out.exists()
