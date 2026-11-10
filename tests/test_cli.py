@@ -1907,3 +1907,56 @@ def test_cli_dub_preflight_gate_passes(tmp_path, capsys):
         == 0
     )
     assert out.exists()
+
+
+def _write_compare_report(path, **overrides):
+    from video_dubber.assemble import DubReport
+
+    base = {
+        "segments_dubbed": 2,
+        "total_duration": 2.5,
+        "mean_sync_drift": 0.02,
+        "max_sync_drift": 0.05,
+        "segments_over_drift": 0,
+        "mean_fit_factor": 1.02,
+        "max_fit_factor": 1.1,
+        "extreme_fits": 0,
+        "loudness_error_db": 0.5,
+        "translation_coverage": 0.9,
+        "word_error_rate": None,
+        "mos_proxy": 4.5,
+        "verdict": "good",
+    }
+    base.update(overrides)
+    path.write_text(DubReport(**base).to_json(), encoding="utf-8")
+
+
+def test_cli_compare_names_the_winner(tmp_path, capsys):
+    a = tmp_path / "a.json"
+    b = tmp_path / "b.json"
+    _write_compare_report(a)
+    _write_compare_report(b, mos_proxy=3.2, mean_sync_drift=0.15, verdict="review")
+    assert main(["compare", str(a), str(b), "--label-a", "asha", "--label-b", "ravi"]) == 0
+    out = capsys.readouterr().out
+    assert "Verdict: **asha**" in out
+    assert "| MOS proxy | 4.5 | 3.2 | asha |" in out
+
+
+def test_cli_compare_json_output(tmp_path, capsys):
+    a = tmp_path / "a.json"
+    b = tmp_path / "b.json"
+    _write_compare_report(a)
+    _write_compare_report(b)
+    assert main(["compare", str(a), str(b), "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["verdict"] == "tie"
+    assert data["label_a"] == "A"
+
+
+def test_cli_compare_bad_report_fails(tmp_path, capsys):
+    a = tmp_path / "a.json"
+    b = tmp_path / "b.json"
+    a.write_text("{not json", encoding="utf-8")
+    _write_compare_report(b)
+    assert main(["compare", str(a), str(b)]) == 1
+    assert "error" in capsys.readouterr().err
