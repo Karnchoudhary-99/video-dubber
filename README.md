@@ -21,6 +21,7 @@ keeping the speaker's voice.
 - [x] HTML quality reports (per-segment table, verdict banner, batch summary)
 - [x] Dub-synced subtitles (SRT/VTT retimed to the placed dub audio)
 - [x] Segment patching (re-dub one segment in place, refresh report)
+- [x] Watch-folder mode (dub new files as they land, persistent state)
 - [ ] Self-review checklist, then public
 
 ## Quick start
@@ -428,6 +429,43 @@ video-dubber patch --dub dubbed.wav --transcript translated.json \
 - Demo: `python examples/demo_patch.py` — the patched line's 1.43x fit
   flips the verdict to `review` while segment 1 stays bit-identical.
 
+## Watch-folder mode
+
+Drop videos into a folder and have them dubbed as they arrive — no
+manifest, no re-running a batch by hand:
+
+```bash
+video-dubber watch incoming/ --out-dir out/ --target hi \
+  --profile asha.json --interval 60
+```
+
+- Every scan dubs each new media file (mp4/mkv/mov/webm/avi/wav/mp3/
+  flac/m4a/ogg; `--extensions` overrides the list) through the full
+  pipeline — extract → transcribe → translate → dub — into
+  `out/<job-name>/`, exactly like a batch job. Job names come from the
+  file name, sanitised and de-duplicated (`Morning Clip.mp4` →
+  `morning-clip`).
+- A state file, `out/.dubber-watch.json` by default (`--state` moves
+  it), records every dubbed file by size + mtime fingerprint. A
+  restart never re-dubs finished work; a file edited in place is
+  re-dubbed once (with `--force` semantics, so the old output does not
+  skip it); a file whose dub failed is retried on the next scan instead
+  of being marked done.
+- `--once` scans once and exits; `--scans N` stops after N scans (both
+  for scripting and CI). Without either, the watcher polls forever
+  until Ctrl-C, which stops it cleanly. `--backend scripted --script
+  words.json` works for offline demos, and `--glossary`, `--max-chars`,
+  `--no-mux`, `--profiles`, `--bed-level` and `--enhance` all apply to
+  every file. `--target` / `--source` / `--bed-level` fall back to
+  `dubber.toml` when the flags are left out.
+- The fingerprint is size + nanosecond mtime, not a full-file hash —
+  hashing whole videos on every scan would cost more than the scan.
+  The one blind spot: a file rewritten with identical size and mtime
+  is not detected; re-dub it with `--force` via batch instead.
+- Demo: `python examples/demo_watch.py` — two files dubbed on the
+  first scan, a second scan finds nothing new, a third file dropped in
+  is dubbed on the next scan and only it.
+
 ## Status
 
 Audio extraction + transcription are done (62 tests). Translation is done
@@ -466,7 +504,12 @@ rows now also record each clip's placed duration, so a later patch and
 subtitle retiming use the exact span. `patch --dry-run` reports the fit,
 drift and verdict without writing anything, and a CLI test pins that a
 patched bedded dub keeps its music bed bit-identical outside the
-patched span. Remaining: the self-review checklist and public flip — the
+patched span. Watch-folder mode is done (397 tests): `watch` polls a
+folder and dubs each new file through the full pipeline, with a JSON
+state file so restarts never re-dub finished work, edited files are
+re-dubbed once, and failed files are retried on the next scan; `--once`
+and `--scans` make single scans scriptable. Remaining: the self-review
+checklist and public flip — the
 project stays private per the 5–7 day pace rule (started 2026-11-08,
 earliest completion 2026-11-13).
 
