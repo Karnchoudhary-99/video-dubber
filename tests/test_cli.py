@@ -1404,3 +1404,167 @@ def test_cli_diarize_empty_library_fails(tmp_path, capsys):
         == 1
     )
     assert "empty voice library" in capsys.readouterr().err
+
+
+# --- patch -------------------------------------------------------------------
+
+
+def _make_dubbed(tmp_path):
+    """Run `dub` once; returns (dub wav, transcript, profile, report)."""
+    transcript = tmp_path / "hi.json"
+    _write_dub_transcript(transcript)
+    profile = tmp_path / "dub.json"
+    _write_dub_profile(profile)
+    out = tmp_path / "dub.wav"
+    report = tmp_path / "report.json"
+    assert (
+        main(
+            [
+                "dub",
+                str(transcript),
+                "--profile",
+                str(profile),
+                "--out",
+                str(out),
+                "--report-out",
+                str(report),
+                "--report-format",
+                "json",
+            ]
+        )
+        == 0
+    )
+    return out, transcript, profile, report
+
+
+def test_cli_patch_replaces_one_segment(tmp_path, capsys):
+    dub, transcript, profile, report = _make_dubbed(tmp_path)
+    before = load_wav(str(dub))
+    out = tmp_path / "patched.wav"
+    patched_transcript = tmp_path / "patched.json"
+    patched_report = tmp_path / "patched-report.json"
+    assert (
+        main(
+            [
+                "patch",
+                "--dub",
+                str(dub),
+                "--transcript",
+                str(transcript),
+                "--profile",
+                str(profile),
+                "--segment",
+                "2",
+                "--text",
+                "बदला हुआ",
+                "--out",
+                str(out),
+                "--transcript-out",
+                str(patched_transcript),
+                "--report",
+                str(report),
+                "--report-out",
+                str(patched_report),
+            ]
+        )
+        == 0
+    )
+    assert "patched segment 2" in capsys.readouterr().out
+    after = load_wav(str(out))
+    assert after.duration == pytest.approx(before.duration)
+    # Segment 1 (0-1s) is untouched; segment 2 changed.
+    assert after.samples[:16_000] == before.samples[:16_000]
+    assert after.samples[32_000:] != before.samples[32_000:]
+    patched = Transcript.from_json(patched_transcript.read_text(encoding="utf-8"))
+    assert patched.segments[1].text == "बदला हुआ"
+    assert patched.segments[0].text == "नमस्ते दुनिया"
+    data = json.loads(patched_report.read_text(encoding="utf-8"))
+    assert data["segments"][1]["text"] == "बदला हुआ"
+    assert "verdict" in data
+
+
+def test_cli_patch_with_subtitles(tmp_path):
+    dub, transcript, profile, report = _make_dubbed(tmp_path)
+    out = tmp_path / "patched.wav"
+    assert (
+        main(
+            [
+                "patch",
+                "--dub",
+                str(dub),
+                "--transcript",
+                str(transcript),
+                "--profile",
+                str(profile),
+                "--segment",
+                "2",
+                "--text",
+                "बदला हुआ",
+                "--out",
+                str(out),
+                "--report",
+                str(report),
+                "--subtitles",
+            ]
+        )
+        == 0
+    )
+    srt = (tmp_path / "patched.srt").read_text(encoding="utf-8")
+    assert "बदला हुआ" in srt
+    assert "नमस्ते दुनिया" in srt
+    assert (tmp_path / "patched.vtt").exists()
+
+
+def test_cli_patch_bad_segment_fails(tmp_path, capsys):
+    dub, transcript, profile, _report = _make_dubbed(tmp_path)
+    out = tmp_path / "patched.wav"
+    assert (
+        main(
+            [
+                "patch",
+                "--dub",
+                str(dub),
+                "--transcript",
+                str(transcript),
+                "--profile",
+                str(profile),
+                "--segment",
+                "9",
+                "--text",
+                "x",
+                "--out",
+                str(out),
+            ]
+        )
+        == 1
+    )
+    assert "error:" in capsys.readouterr().err
+
+
+def test_cli_patch_missing_dub_fails(tmp_path, capsys):
+    transcript = tmp_path / "hi.json"
+    _write_dub_transcript(transcript)
+    profile = tmp_path / "dub.json"
+    _write_dub_profile(profile)
+    out = tmp_path / "patched.wav"
+    assert (
+        main(
+            [
+                "patch",
+                "--dub",
+                str(tmp_path / "nope.wav"),
+                "--transcript",
+                str(transcript),
+                "--profile",
+                str(profile),
+                "--segment",
+                "1",
+                "--text",
+                "x",
+                "--out",
+                str(out),
+            ]
+        )
+        == 1
+    )
+    assert "error:" in capsys.readouterr().err

@@ -16,6 +16,8 @@ Subcommands (see ``video-dubber <cmd> --help`` for details):
 * ``synthesize`` — render text as audio in a cloned voice (demo synthesis).
 * ``dub`` — render a full dubbed track from a translated transcript and
   a speaker profile, with a quality report (and optional video mux).
+* ``patch`` — re-dub one segment of an existing dub in place (new text,
+  same window), and refresh its transcript and quality report.
 * ``report`` — re-render a saved JSON quality report as HTML or Markdown.
 * ``enhance`` — clean up a WAV: trim silence, cut hum, gate room noise,
   normalize loudness to a target RMS.
@@ -30,6 +32,7 @@ from video_dubber import __version__
 from video_dubber.assemble import (
     AssemblyError,
     DubReport,
+    SegmentRow,
     build_report,
     dub_transcript,
     mux_audio,
@@ -56,6 +59,7 @@ from video_dubber.enhance import (
 )
 from video_dubber.extract import ExtractionError, extract_audio
 from video_dubber.fidelity import FidelityError, check_fidelity
+from video_dubber.patch import PatchError, patch_dub, patch_transcript, refresh_report
 from video_dubber.report import render_html_report
 from video_dubber.subtitles import retime_transcript
 from video_dubber.transcribe import (
@@ -285,6 +289,41 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["json", "md", "html"],
         default="json",
         help="Quality report format (default json).",
+    )
+
+    p_patch = sub.add_parser(
+        "patch", help="Re-dub one segment of an existing dub (new text, same window)."
+    )
+    p_patch.add_argument("--dub", required=True, help="Existing dubbed WAV file.")
+    p_patch.add_argument("--transcript", required=True, help="Translated transcript JSON file.")
+    p_patch.add_argument("--profile", required=True, help="Speaker profile JSON path.")
+    p_patch.add_argument(
+        "--profiles",
+        help="JSON file mapping speaker names to profile JSON paths, for "
+        "multi-speaker transcripts (unlisted speakers use --profile).",
+    )
+    p_patch.add_argument(
+        "--segment",
+        type=int,
+        required=True,
+        help="Segment to re-dub (1-based, among timed segments — the report's numbering).",
+    )
+    p_patch.add_argument("--text", required=True, help="Replacement text for the segment.")
+    p_patch.add_argument("--original", help="Original audio WAV (for loudness matching).")
+    p_patch.add_argument("--out", required=True, help="Output patched WAV path.")
+    p_patch.add_argument("--transcript-out", help="Write the patched transcript JSON here.")
+    p_patch.add_argument(
+        "--report", help="Saved dub report JSON (from dub --report-out) to refresh."
+    )
+    p_patch.add_argument(
+        "--report-out",
+        help="Write the refreshed report JSON here (default: overwrite --report).",
+    )
+    p_patch.add_argument(
+        "--subtitles",
+        action="store_true",
+        help="Also write <out-stem>.srt and <out-stem>.vtt, retimed to the "
+        "patched audio (cues match the placed speech, not the original windows).",
     )
 
     p_report = sub.add_parser(
@@ -809,6 +848,83 @@ def _cmd_dub(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_patch(args: argparse.Namespace) -> int:
+    with open(args.transcript, encoding="utf-8") as fh:
+        transcript = Transcript.from_json(fh.read())
+    with open(args.profile, encoding="utf-8") as fh:
+        profile = SpeakerProfile.from_json(fh.read())
+    profiles = _load_profiles_map(args.profiles) if args.profiles else None
+    dub_audio = load_wav(args.dub)
+    original = resample(load_wav(args.original), DEFAULT_SAMPLE_RATE) if args.original else None
+    report = None
+    if args.report:
+        with open(args.report, encoding="utf-8") as fh:
+            report = DubReport.from_json(fh.read())
+    # Placed spans from the report when one is given (exact, including
+    # clamped clips); otherwise the segment windows.
+    placed: list[tuple[float, float]] | None = None
+    if report is not None:
+        placed = [
+            (
+                row.start,
+                row.placed_duration if row.placed_duration is not None else row.end - row.start,
+            )
+            for row in report.segments
+        ]
+    patched_transcript = patch_transcript(transcript, args.segment, args.text)
+    patched_audio, factor, placed_duration = patch_dub(
+        dub_audio,
+        transcript,
+        args.segment,
+        args.text,
+        ScriptedVoiceCloner(),
+        profile,
+        original,
+        profiles=profiles,
+        placed=placed,
+    )
+    save_wav(args.out, patched_audio)
+    print(
+        f"patched segment {args.segment} (fit {factor:.2f}, "
+        f"placed {placed_duration:.2f}s) -> {args.out}"
+    )
+    if args.transcript_out:
+        with open(args.transcript_out, "w", encoding="utf-8") as fh:
+            fh.write(patched_transcript.to_json())
+        print(f"wrote {args.transcript_out}")
+    if report is not None:
+        segment = [s for s in patched_transcript.segments if s.words][args.segment - 1]
+        row = SegmentRow(
+            index=args.segment,
+            start=segment.start,
+            end=segment.end,
+            drift=abs((segment.start + placed_duration) - segment.end),
+            fit_factor=factor,
+            speaker=segment.speaker,
+            text=args.text,
+            placed_duration=placed_duration,
+        )
+        report = refresh_report(report, row)
+        report_out = args.report_out or args.report
+        with open(report_out, "w", encoding="utf-8") as fh:
+            fh.write(report.to_json())
+        print(f"wrote {report_out} (verdict: {report.verdict})")
+    if args.subtitles:
+        import os
+
+        timed = [s for s in patched_transcript.segments if s.words]
+        spans = list(placed) if placed is not None else [(s.start, s.end - s.start) for s in timed]
+        spans[args.segment - 1] = (timed[args.segment - 1].start, placed_duration)
+        stem, _ = os.path.splitext(args.out)
+        synced = retime_transcript(patched_transcript, spans)
+        for ext, text in (("srt", synced.to_srt()), ("vtt", synced.to_vtt())):
+            path = f"{stem}.{ext}"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            print(f"wrote {path}")
+    return 0
+
+
 def _cmd_report(args: argparse.Namespace) -> int:
     with open(args.input, encoding="utf-8") as fh:
         report = DubReport.from_json(fh.read())
@@ -903,6 +1019,8 @@ def main(argv=None) -> int:
             return _cmd_synthesize(args)
         if args.command == "dub":
             return _cmd_dub(args)
+        if args.command == "patch":
+            return _cmd_patch(args)
         if args.command == "report":
             return _cmd_report(args)
         if args.command == "enhance":
@@ -916,6 +1034,7 @@ def main(argv=None) -> int:
         BatchError,
         DiarizeError,
         ExtractionError,
+        PatchError,
         TranscriptionError,
         TranslationError,
         VoiceCloneError,
