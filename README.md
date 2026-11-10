@@ -22,6 +22,7 @@ keeping the speaker's voice.
 - [x] Dub-synced subtitles (SRT/VTT retimed to the placed dub audio)
 - [x] Segment patching (re-dub one segment in place, refresh report)
 - [x] Watch-folder mode (dub new files as they land, persistent state)
+- [x] Multi-target dubbing (one source → several languages, per-language bundles + summary)
 - [ ] Self-review checklist, then public
 
 ## Quick start
@@ -466,6 +467,39 @@ video-dubber watch incoming/ --out-dir out/ --target hi \
   first scan, a second scan finds nothing new, a third file dropped in
   is dubbed on the next scan and only it.
 
+## Multi-target dubbing
+
+One source video, several languages — a single command dubs the same
+transcript into every target and writes a per-language bundle plus one
+summary comparing them:
+
+```bash
+video-dubber dub-multi source.json --targets hi,es,fr \
+  --profile asha.json --out-dir bundles/
+```
+
+- Per target the full pipeline runs — translate (timing windows
+  preserved), dub (synthesise + fit + loudness-match, optional music
+  bed via `--bed-level` and `--enhance`) — and writes
+  `dub.<target>.wav`, `dub.<target>.report.json` and dub-synced
+  `dub.<target>.srt` / `.vtt` (`--no-subtitles` skips the subtitle
+  files). `--stem` renames the bundle prefix; `--profiles`,
+  `--glossary`, `--max-chars` and `--backend` (dictionary/argos) apply
+  to every target.
+- The summary, `dub.multilang.json` + `dub.multilang.md`, lists each
+  target's verdict, MOS proxy, mean drift, mean fit and dictionary
+  coverage in one table, so the weakest language is visible at a
+  glance instead of buried in per-target reports.
+- A target that fails (no dictionary for that pair, synthesis error)
+  is recorded in the summary and the run carries on with the next
+  language; the command exits 1 when any target failed. `--stop-on-error`
+  aborts on the first failure instead. Dubbing into the source language
+  itself is rejected up front — it is a no-op, not a dub — and duplicate
+  targets (`hi,es,hi`) are dubbed once.
+- Demo: `python examples/demo_multilang.py` — one English source dubbed
+  into Hindi and Spanish; the Hindi dub needs a 0.66x mean fit on the
+  demo's short windows, so its verdict honestly reads `review`.
+
 ## Status
 
 Audio extraction + transcription are done (62 tests). Translation is done
@@ -508,7 +542,12 @@ patched span. Watch-folder mode is done (397 tests): `watch` polls a
 folder and dubs each new file through the full pipeline, with a JSON
 state file so restarts never re-dub finished work, edited files are
 re-dubbed once, and failed files are retried on the next scan; `--once`
-and `--scans` make single scans scriptable. Remaining: the self-review
+and `--scans` make single scans scriptable. Multi-target dubbing is done
+(414 tests): `dub-multi` dubs one source transcript into several
+languages in one run, writing a per-language bundle (dubbed WAV, quality
+report, dub-synced subtitles) plus a JSON/Markdown summary comparing the
+targets; a failing target is recorded and the run carries on unless
+`--stop-on-error` is set. Remaining: the self-review
 checklist and public flip — the
 project stays private per the 5–7 day pace rule (started 2026-11-08,
 earliest completion 2026-11-13).
