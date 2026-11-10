@@ -73,3 +73,122 @@ def test_patch_transcript_rejects_bad_index():
 def test_patch_transcript_rejects_blank_text():
     with pytest.raises(PatchError):
         patch_transcript(_transcript(), 1, "  ")
+
+
+# --- patch_dub ---------------------------------------------------------------
+
+import math
+
+from video_dubber.assemble import AssemblyError, dub_transcript
+from video_dubber.audio import AudioData, make_sine
+from video_dubber.patch import patch_dub
+from video_dubber.voice import ScriptedVoiceCloner
+
+
+def _dubbed():
+    """A two-segment dub (0-2s, 3-5s) plus the cloner/profile that made it."""
+    transcript = Transcript(
+        segments=[
+            Segment(words=[Word("hello", 0.0, 1.0), Word("world", 1.0, 2.0)]),
+            Segment(
+                words=[Word("second", 3.0, 4.0), Word("line", 4.0, 5.0)],
+                speaker="Ravi",
+            ),
+        ],
+        language="hi",
+    )
+    cloner = ScriptedVoiceCloner()
+    profile = cloner.clone("Demo Voice", [make_sine(180.0, 1.0)])
+    dub_audio, _factors, placed = dub_transcript(transcript, cloner, profile)
+    return transcript, cloner, profile, dub_audio, placed
+
+
+def _rms(samples: list[float]) -> float:
+    return math.sqrt(sum(s * s for s in samples) / len(samples)) if samples else 0.0
+
+
+def test_patch_dub_replaces_only_the_target_window():
+    transcript, cloner, profile, dub_audio, placed = _dubbed()
+    patched, factor, placed_duration = patch_dub(
+        dub_audio, transcript, 2, "badli hui line", cloner, profile, placed=placed
+    )
+    assert patched.duration == pytest.approx(dub_audio.duration)
+    assert 0.6 <= factor <= 1.6
+    assert placed_duration <= 2.0
+    # Everything before segment 2 starts is bit-identical.
+    assert patched.samples[: 3 * 16_000] == dub_audio.samples[: 3 * 16_000]
+    # The patched window actually changed.
+    assert patched.samples[3 * 16_000 :] != dub_audio.samples[3 * 16_000 :]
+
+
+def test_patch_dub_zeroes_only_the_placed_span():
+    transcript, cloner, profile, dub_audio, _placed = _dubbed()
+    # Segment 1's placed clip is only 0-1s; plant a marker tone in the
+    # 1-2s gap (music bed) and check patching segment 1 leaves it alone.
+    samples = list(dub_audio.samples)
+    marker = make_sine(660.0, 1.0, sample_rate=16_000).samples
+    for i in range(16_000, 32_000):
+        samples[i] = 0.3 * marker[i - 16_000]
+    marked = AudioData(samples, 16_000)
+    patched, _factor, _dur = patch_dub(
+        marked, transcript, 1, "naya", cloner, profile, placed=[(0.0, 1.0), (3.0, 2.0)]
+    )
+    assert patched.samples[16_000:32_000] == marked.samples[16_000:32_000]
+    assert patched.samples[:16_000] != marked.samples[:16_000]
+
+
+def test_patch_dub_matches_the_replaced_clips_loudness():
+    transcript, cloner, profile, dub_audio, placed = _dubbed()
+    old_rms = _rms(dub_audio.samples[3 * 16_000 : 5 * 16_000])
+    patched, _factor, _dur = patch_dub(
+        dub_audio, transcript, 2, "badli hui line", cloner, profile, placed=placed
+    )
+    new_rms = _rms(patched.samples[3 * 16_000 : 5 * 16_000])
+    assert new_rms == pytest.approx(old_rms, rel=0.25)
+
+
+def test_patch_dub_uses_the_speakers_profile():
+    transcript, cloner, profile, dub_audio, placed = _dubbed()
+    other = cloner.clone("Other Voice", [make_sine(90.0, 1.0)])
+    default_voice, _, _ = patch_dub(
+        dub_audio, transcript, 2, "badli hui line", cloner, profile, placed=placed
+    )
+    ravi_voice, _, _ = patch_dub(
+        dub_audio,
+        transcript,
+        2,
+        "badli hui line",
+        cloner,
+        profile,
+        profiles={"Ravi": other},
+        placed=placed,
+    )
+    assert ravi_voice.samples[3 * 16_000 :] != default_voice.samples[3 * 16_000 :]
+
+
+def test_patch_dub_rejects_bad_index_and_short_audio():
+    transcript, cloner, profile, dub_audio, _placed = _dubbed()
+    with pytest.raises(PatchError):
+        patch_dub(dub_audio, transcript, 3, "x", cloner, profile)
+    with pytest.raises(PatchError):
+        patch_dub(dub_audio, transcript, 1, "  ", cloner, profile)
+    with pytest.raises(PatchError):
+        patch_dub(dub_audio, transcript, 1, "x", cloner, profile, placed=[(0.0, 2.0)])
+    short = AudioData(dub_audio.samples[: 2 * 16_000], 16_000)
+    with pytest.raises(AssemblyError):
+        patch_dub(short, transcript, 2, "x", cloner, profile)
+
+
+def test_patch_dub_without_placed_zeroes_the_whole_window():
+    transcript, cloner, profile, dub_audio, _placed = _dubbed()
+    # No placed spans: the full 0-2s window is cleared before splicing,
+    # so a marker in the gap is gone after the patch.
+    samples = list(dub_audio.samples)
+    for i in range(16_000, 32_000):
+        samples[i] = 0.3
+    marked = AudioData(samples, 16_000)
+    patched, _factor, _dur = patch_dub(marked, transcript, 1, "naya", cloner, profile)
+    # The gap still holds the new (short) clip's tail or silence — either
+    # way the 0.3 marker is gone from at least the clip's own span.
+    assert all(s != 0.3 for s in patched.samples[:16_000])
+    assert patched.samples[16_000:32_000] != marked.samples[16_000:32_000]

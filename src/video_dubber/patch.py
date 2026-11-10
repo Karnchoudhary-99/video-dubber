@@ -154,6 +154,8 @@ def patch_dub(
             f"segment {index} out of range: transcript has {len(timed)} timed segments"
         )
     segment = timed[index - 1]
+    if not new_text.split():
+        raise PatchError("patched segment text must not be empty")
     if placed is not None and len(placed) != len(timed):
         raise PatchError(f"placed has {len(placed)} spans for {len(timed)} timed segments")
     if dub_audio.duration < segment.end:
