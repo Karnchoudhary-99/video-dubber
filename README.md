@@ -595,7 +595,7 @@ targets; a failing target is recorded and the run carries on unless
 peak level, VAD speech coverage, SNR and edge silence, and reports a
 `pass` / `pass_with_warnings` / `fail` verdict as Markdown or JSON;
 `dub --preflight` aborts on a failing source before any synthesis.
-Dub comparison is done (450 tests): `compare_reports` scores two
+Dub comparison is done (452 tests): `compare_reports` scores two
 saved quality reports metric by metric (MOS proxy, sync drift, fit
 factors, verdict, plus loudness error, coverage and WER when both
 reports have them), with a win-count verdict broken by the MOS proxy
