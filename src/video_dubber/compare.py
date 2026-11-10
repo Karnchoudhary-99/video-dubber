@@ -68,6 +68,25 @@ class DubComparison:
             return self.label_a if mos.winner == "a" else self.label_b
         return "tie"
 
+    def to_markdown(self) -> str:
+        """A table with one row per metric plus a verdict line."""
+        lines = [
+            f"# Dub comparison — {self.label_a} vs {self.label_b}",
+            "",
+            (
+                f"Verdict: **{self.verdict}** "
+                f"({self.a_wins} metrics to {self.label_a}, "
+                f"{self.b_wins} to {self.label_b})"
+            ),
+            "",
+            "| Metric | " + self.label_a + " | " + self.label_b + " | Winner |",
+            "| --- | --- | --- | --- |",
+        ]
+        for m in self.metrics:
+            winner = {"a": self.label_a, "b": self.label_b, "tie": "tie"}[m.winner]
+            lines.append(f"| {m.name} | {m.a_value} | {m.b_value} | {winner} |")
+        return "\n".join(lines) + "\n"
+
     def to_dict(self) -> dict:
         return {
             "label_a": self.label_a,
