@@ -205,7 +205,9 @@ def _check_snr(
     speech_rms = _rms(speech_samples)
     gap_rms = _rms(gap_samples)
     if gap_rms <= 0.0:
-        return PreflightCheck("snr", "pass", "no silence between segments to measure against", None)
+        return PreflightCheck(
+            "snr", "pass", "gaps are digital silence — no noise floor to measure against", None
+        )
     snr_db = 20 * math.log10(speech_rms / gap_rms) if speech_rms > 0.0 else float("-inf")
     if snr_db < config.fail_snr_db:
         return PreflightCheck(
