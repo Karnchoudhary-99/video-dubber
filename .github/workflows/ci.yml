@@ -24,3 +24,4 @@ jobs:
       - run: python examples/demo_config.py
       - run: python examples/demo_report.py
       - run: python examples/demo_subtitles.py
+      - run: python examples/demo_patch.py
