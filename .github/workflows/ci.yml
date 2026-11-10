@@ -28,3 +28,4 @@ jobs:
       - run: python examples/demo_watch.py
       - run: python examples/demo_multilang.py
       - run: python examples/demo_preflight.py
+      - run: python examples/demo_compare.py
