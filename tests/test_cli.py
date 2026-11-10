@@ -1139,6 +1139,49 @@ def test_cli_dub_with_profiles_and_subtitles(tmp_path, capsys):
     assert (tmp_path / "dub.vtt").read_text(encoding="utf-8").startswith("WEBVTT")
 
 
+def test_cli_dub_subtitles_follow_placed_audio_not_window(tmp_path, capsys):
+    """A clamped stretch ends the speech early; the cue must end with it."""
+    transcript = tmp_path / "hi.json"
+    transcript.write_text(
+        Transcript(
+            segments=[
+                {
+                    "words": [{"text": "नमस्ते", "start": 0.0, "end": 4.0}],
+                    "speaker": "Asha",
+                },
+            ],
+            language="hi",
+        ).to_json()
+    )
+    default = tmp_path / "dub.json"
+    _write_dub_profile(default)
+    out = tmp_path / "dub.wav"
+    assert (
+        main(
+            [
+                "dub",
+                str(transcript),
+                "--profile",
+                str(default),
+                "--out",
+                str(out),
+                "--subtitles",
+            ]
+        )
+        == 0
+    )
+    # One short word in a 4s window: the 1.6x clamp leaves the placed clip
+    # ~0.85s long, so the cue must end there — not at the 4.0s window end.
+    srt = (tmp_path / "dub.srt").read_text(encoding="utf-8")
+    assert "00:00:04,000" not in srt
+    cue_line = [line for line in srt.splitlines() if "-->" in line][0]
+    end = cue_line.split("-->")[1].strip()
+    hours, minutes, rest = end.split(":")
+    secs, millis = rest.split(",")
+    end_s = int(hours) * 3600 + int(minutes) * 60 + int(secs) + int(millis) / 1000
+    assert 0.80 < end_s < 0.90
+
+
 def test_cli_dub_profiles_map_missing_file_fails(tmp_path, capsys):
     transcript = tmp_path / "hi.json"
     _write_dub_transcript(transcript)
