@@ -1606,3 +1606,66 @@ def test_cli_patch_dry_run_writes_nothing(tmp_path, capsys):
     assert not out.exists()
     assert not patched_transcript.exists()
     assert report.read_text(encoding="utf-8") == report_before
+
+
+def test_cli_patch_leaves_music_bed_untouched(tmp_path):
+    transcript = tmp_path / "hi.json"
+    _write_dub_transcript(transcript)
+    profile = tmp_path / "dub.json"
+    _write_dub_profile(profile)
+    original = tmp_path / "orig.wav"
+    save_wav(str(original), make_sine(97.3, 2.5, amplitude=0.5))
+    dub = tmp_path / "dub.wav"
+    report = tmp_path / "report.json"
+    assert (
+        main(
+            [
+                "dub",
+                str(transcript),
+                "--profile",
+                str(profile),
+                "--original",
+                str(original),
+                "--bed-level",
+                "0.3",
+                "--out",
+                str(dub),
+                "--report-out",
+                str(report),
+                "--report-format",
+                "json",
+            ]
+        )
+        == 0
+    )
+    before = load_wav(str(dub))
+    out = tmp_path / "patched.wav"
+    assert (
+        main(
+            [
+                "patch",
+                "--dub",
+                str(dub),
+                "--transcript",
+                str(transcript),
+                "--profile",
+                str(profile),
+                "--original",
+                str(original),
+                "--segment",
+                "2",
+                "--text",
+                "बदला हुआ",
+                "--out",
+                str(out),
+                "--report",
+                str(report),
+            ]
+        )
+        == 0
+    )
+    after = load_wav(str(out))
+    # Everything before segment 2 (2.0s) — speech and music bed alike —
+    # is bit-identical; only the patched segment's span changed.
+    assert after.samples[: 2 * 16_000] == before.samples[: 2 * 16_000]
+    assert after.samples[2 * 16_000 :] != before.samples[2 * 16_000 :]
