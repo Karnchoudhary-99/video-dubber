@@ -19,6 +19,7 @@ keeping the speaker's voice.
 - [x] Translation fidelity (round-trip back-translation check, flags unstable segments)
 - [x] Project config file (dubber.toml defaults for translate/dub/enhance/diarize)
 - [x] HTML quality reports (per-segment table, verdict banner, batch summary)
+- [x] Dub-synced subtitles (SRT/VTT retimed to the placed dub audio)
 - [ ] Self-review checklist, then public
 
 ## Quick start
@@ -211,13 +212,21 @@ video-dubber dub translated.json --profile narrator.json \
   unlabelled segments — or speakers with no profile — fall back to the
   default `--profile` voice instead of failing the dub.
 - The quality report counts `speakers_dubbed` (distinct speaker labels).
-- `--subtitles` writes `dubbed.srt` + `dubbed.vtt` of the translated
-  transcript next to the dub WAV; batch jobs always write
-  `translated.srt` / `translated.vtt` too, and a batch job can carry a
-  `"profiles": {"Asha": "asha.json"}` key with the same meaning.
+- `--subtitles` writes `dubbed.srt` + `dubbed.vtt` next to the dub WAV;
+  batch jobs always write `translated.srt` / `translated.vtt` too, and
+  a batch job can carry a `"profiles": {"Asha": "asha.json"}` key with
+  the same meaning. The cues are **retimed to the dubbed audio**: a
+  segment's words are rescaled proportionally into its placed span, so
+  a cue ends when the dubbed speech ends — not at the original window's
+  end, where it would linger over silence after a clamped stretch.
+  Cues shorter than 0.5s are stretched to that readable minimum,
+  never past the next cue's start.
+  (`video_dubber.subtitles.retime_transcript`)
 - Try it without recordings: `python examples/demo_multispeaker.py`.
   A runnable batch version lives in `examples/multispeaker/` — run it
   with `video-dubber batch examples/multispeaker/manifest.json --out-dir out/`.
+  The retiming demo is `python examples/demo_subtitles.py` — one short
+  word in a 4s window gets a 0.85s cue instead of a 4s one.
 
 ## Speaker diarization
 
@@ -414,7 +423,13 @@ example file. HTML quality reports are done (334 tests): a self-contained
 per-segment table flagging drift over 0.10s or fits outside 0.8–1.25,
 `dub --report-format html`, `batch-report.html`, and an end-to-end demo
 run in CI. Saved JSON reports round-trip through `DubReport.from_json`
-and can be re-rendered without re-dubbing via the `report` subcommand. Remaining: the self-review checklist and public flip — the
+and can be re-rendered without re-dubbing via the `report` subcommand.
+Dub-synced subtitles are done (349 tests): `subtitles.retime_transcript`
+rescales each segment's words into its placed span, so `dub --subtitles`
+and batch `translated.srt`/`.vtt` cues end when the dubbed speech ends
+instead of lingering to the original window's end after a clamped
+stretch; short cues stretch to a 0.5s readable minimum without ever
+overlapping the next cue. Remaining: the self-review checklist and public flip — the
 project stays private per the 5–7 day pace rule (started 2026-11-08,
 earliest completion 2026-11-13).
 

@@ -1174,7 +1174,7 @@ def test_cli_dub_subtitles_follow_placed_audio_not_window(tmp_path, capsys):
     # ~0.85s long, so the cue must end there — not at the 4.0s window end.
     srt = (tmp_path / "dub.srt").read_text(encoding="utf-8")
     assert "00:00:04,000" not in srt
-    cue_line = [line for line in srt.splitlines() if "-->" in line][0]
+    cue_line = next(line for line in srt.splitlines() if "-->" in line)
     end = cue_line.split("-->")[1].strip()
     hours, minutes, rest = end.split(":")
     secs, millis = rest.split(",")
