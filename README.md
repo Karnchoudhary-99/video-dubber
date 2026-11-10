@@ -456,14 +456,17 @@ rescales each segment's words into its placed span, so `dub --subtitles`
 and batch `translated.srt`/`.vtt` cues end when the dubbed speech ends
 instead of lingering to the original window's end after a clamped
 stretch; short cues stretch to a 0.5s readable minimum without ever
-overlapping the next cue. Segment patching is done (372 tests):
+overlapping the next cue. Segment patching is done (374 tests):
 `patch_transcript` / `patch_dub` / `refresh_report` plus the `patch`
 CLI subcommand — one segment re-synthesised, fitted and loudness-matched
 to the clip it replaces, spliced in with only its placed span zeroed,
 and the saved report's aggregates recomputed (the demo's patched line
 needs a 1.43x fit, so its verdict honestly flips to `review`); report
 rows now also record each clip's placed duration, so a later patch and
-subtitle retiming use the exact span. Remaining: the self-review checklist and public flip — the
+subtitle retiming use the exact span. `patch --dry-run` reports the fit,
+drift and verdict without writing anything, and a CLI test pins that a
+patched bedded dub keeps its music bed bit-identical outside the
+patched span. Remaining: the self-review checklist and public flip — the
 project stays private per the 5–7 day pace rule (started 2026-11-08,
 earliest completion 2026-11-13).
 
