@@ -89,9 +89,23 @@ def _dubbed():
     """A two-segment dub (0-2s, 3-5s) plus the cloner/profile that made it."""
     transcript = Transcript(
         segments=[
-            Segment(words=[Word("hello", 0.0, 1.0), Word("world", 1.0, 2.0)]),
             Segment(
-                words=[Word("second", 3.0, 4.0), Word("line", 4.0, 5.0)],
+                words=[
+                    Word("one", 0.0, 0.4),
+                    Word("two", 0.4, 0.8),
+                    Word("three", 0.8, 1.2),
+                    Word("four", 1.2, 1.6),
+                    Word("five", 1.6, 2.0),
+                ]
+            ),
+            Segment(
+                words=[
+                    Word("six", 3.0, 3.4),
+                    Word("seven", 3.4, 3.8),
+                    Word("eight", 3.8, 4.2),
+                    Word("nine", 4.2, 4.6),
+                    Word("ten", 4.6, 5.0),
+                ],
                 speaker="Ravi",
             ),
         ],
@@ -192,3 +206,65 @@ def test_patch_dub_without_placed_zeroes_the_whole_window():
     # way the 0.3 marker is gone from at least the clip's own span.
     assert all(s != 0.3 for s in patched.samples[:16_000])
     assert patched.samples[16_000:32_000] != marked.samples[16_000:32_000]
+
+
+# --- refresh_report ----------------------------------------------------------
+
+from video_dubber.assemble import SegmentRow, build_report
+from video_dubber.patch import refresh_report
+
+
+def _report():
+    transcript, cloner, profile, dub_audio, _placed = _dubbed()
+    _audio, factors, placed_spans = dub_transcript(transcript, cloner, profile)
+    return build_report(transcript, placed_spans, factors, dub_audio), transcript
+
+
+def test_refresh_report_recomputes_aggregates():
+    report, _transcript = _report()
+    assert report.verdict == "good"
+    row = report.segments[1]
+    worse = SegmentRow(
+        index=row.index,
+        start=row.start,
+        end=row.end,
+        drift=0.30,
+        fit_factor=1.40,
+        speaker=row.speaker,
+        text="badli hui line",
+    )
+    refreshed = refresh_report(report, worse)
+    assert refreshed.segments[1].text == "badli hui line"
+    assert refreshed.segments[1].drift == pytest.approx(0.30)
+    assert refreshed.max_sync_drift == pytest.approx(0.30)
+    assert refreshed.extreme_fits == 1
+    assert refreshed.verdict == "review"
+    assert refreshed.mos_proxy < report.mos_proxy
+    # Untouched rows and carried-over fields survive.
+    assert refreshed.segments[0] == report.segments[0]
+    assert refreshed.segments_dubbed == report.segments_dubbed
+    assert refreshed.total_duration == pytest.approx(report.total_duration)
+
+
+def test_refresh_report_good_patch_keeps_good_verdict():
+    report, _transcript = _report()
+    row = report.segments[1]
+    same = SegmentRow(
+        index=row.index,
+        start=row.start,
+        end=row.end,
+        drift=0.02,
+        fit_factor=1.05,
+        speaker=row.speaker,
+        text="badli hui line",
+    )
+    refreshed = refresh_report(report, same)
+    assert refreshed.verdict == "good"
+    assert refreshed.mean_sync_drift == pytest.approx((report.segments[0].drift + 0.02) / 2)
+
+
+def test_refresh_report_rejects_unknown_row():
+    report, _transcript = _report()
+    ghost = SegmentRow(index=99, start=0.0, end=1.0, drift=0.0, fit_factor=1.0)
+    with pytest.raises(PatchError):
+        refresh_report(report, ghost)
