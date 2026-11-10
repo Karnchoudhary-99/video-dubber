@@ -167,6 +167,61 @@ def _check_duration(audio: AudioData, config: PreflightConfig) -> PreflightCheck
     return PreflightCheck("duration", "pass", f"{duration:.2f}s", duration)
 
 
+def _check_clipping(audio: AudioData, config: PreflightConfig) -> PreflightCheck:
+    if not audio.samples:
+        return PreflightCheck("clipping", "fail", "no samples to measure", 0.0)
+    clipped = sum(1 for s in audio.samples if abs(s) >= config.clip_threshold)
+    ratio = clipped / len(audio.samples)
+    if ratio > config.max_clipping_ratio:
+        return PreflightCheck(
+            "clipping",
+            "fail",
+            f"{clipped} samples ({ratio:.2%}) pinned at full scale — distortion the dub inherits",
+            ratio,
+        )
+    if ratio > config.warn_clipping_ratio:
+        return PreflightCheck(
+            "clipping",
+            "warn",
+            f"{clipped} samples ({ratio:.2%}) pinned at full scale",
+            ratio,
+        )
+    return PreflightCheck("clipping", "pass", f"{clipped} clipped samples", ratio)
+
+
+def _check_dc_offset(audio: AudioData, config: PreflightConfig) -> PreflightCheck:
+    if not audio.samples:
+        return PreflightCheck("dc_offset", "fail", "no samples to measure", 0.0)
+    mean = sum(audio.samples) / len(audio.samples)
+    offset = abs(mean)
+    if offset > config.max_dc_offset:
+        return PreflightCheck(
+            "dc_offset",
+            "fail",
+            f"mean sample {mean:+.3f} — a bias this large eats headroom and clicks on edits",
+            offset,
+        )
+    if offset > config.warn_dc_offset:
+        return PreflightCheck(
+            "dc_offset", "warn", f"mean sample {mean:+.3f} — consider removing the DC bias", offset
+        )
+    return PreflightCheck("dc_offset", "pass", f"mean sample {mean:+.4f}", offset)
+
+
+def _check_level(audio: AudioData, config: PreflightConfig) -> PreflightCheck:
+    peak = audio.peak
+    if peak <= 0.0:
+        return PreflightCheck("level", "fail", "silence — peak level is 0", peak)
+    if peak < config.min_peak:
+        return PreflightCheck(
+            "level",
+            "warn",
+            f"peak {peak:.3f} is very quiet — the dub will need a large gain",
+            peak,
+        )
+    return PreflightCheck("level", "pass", f"peak {peak:.3f}", peak)
+
+
 def _check_sample_rate(audio: AudioData, config: PreflightConfig) -> PreflightCheck:
     del config  # the threshold is the pipeline's fixed rate, not tunable
     if audio.sample_rate == DEFAULT_SAMPLE_RATE:
