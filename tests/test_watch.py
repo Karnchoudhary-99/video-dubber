@@ -150,3 +150,129 @@ def test_config_default_state_path_is_under_out_dir(tmp_path):
     assert config.resolved_state_path == str(tmp_path / "out" / ".dubber-watch.json")
     custom = _config(tmp_path, watch, state_path=str(tmp_path / "elsewhere.json"))
     assert custom.resolved_state_path == str(tmp_path / "elsewhere.json")
+
+
+# --- watch_once / watch_loop -------------------------------------------------
+
+from video_dubber.batch import BatchJobResult
+from video_dubber.watch import WatchScan, watch_loop, watch_once
+
+
+class _StubRunner:
+    """Fake pipeline: records calls, returns ok unless the name says fail."""
+
+    def __init__(self):
+        self.calls: list[tuple[str, str, bool]] = []
+
+    def __call__(self, job, out_dir, force=False):
+        self.calls.append((job.name, out_dir, force))
+        if "fail" in job.name:
+            return BatchJobResult(name=job.name, status="failed", error="boom")
+        return BatchJobResult(name=job.name, status="ok", verdict="good", mos_proxy=4.2)
+
+
+def test_watch_once_dubs_new_files_and_remembers_them(tmp_path):
+    watch = _watch_dir(tmp_path)
+    config = _config(tmp_path, watch)
+    runner = _StubRunner()
+    scan = watch_once(config, runner=runner)
+    assert scan.new_files == 2
+    assert scan.succeeded == 2
+    assert [name for name, _, _ in runner.calls] == ["clip-one", "clip-two"]
+    assert all(force is False for _, _, force in runner.calls)
+    state = WatchState.load(config.resolved_state_path)
+    assert len(state.files) == 2
+    # Second scan: nothing new, runner not called again.
+    scan2 = watch_once(config, runner=runner)
+    assert scan2.new_files == 0
+    assert len(runner.calls) == 2
+
+
+def test_watch_once_retries_failed_jobs_and_forces_changed_ones(tmp_path):
+    watch = _watch_dir(tmp_path)
+    (watch / "fail-me.mp4").write_bytes(b"will fail")
+    config = _config(tmp_path, watch)
+    runner = _StubRunner()
+    scan = watch_once(config, runner=runner)
+    assert scan.failed == 1
+    assert scan.succeeded == 2
+    state = WatchState.load(config.resolved_state_path)
+    assert "fail-me.mp4" not in state.files
+    # Failed job is retried on the next scan.
+    scan2 = watch_once(config, runner=runner)
+    assert scan2.new_files == 1
+    assert [name for name, _, _ in runner.calls].count("fail-me") == 2
+    # Editing a dubbed file re-dubs it with force=True.
+    (watch / "Clip One.mp4").write_bytes(b"fake video one, re-edited")
+    watch_once(config, runner=runner)
+    forced = [name for name, _, force in runner.calls if force]
+    assert forced == ["clip-one"]
+
+
+def test_watch_once_uses_explicit_state_object(tmp_path):
+    watch = _watch_dir(tmp_path)
+    config = _config(tmp_path, watch)
+    state = WatchState()
+    watch_once(config, runner=_StubRunner(), state=state)
+    assert len(state.files) == 2
+    # The caller's state object is updated in place and also persisted,
+    # so a later load sees the same processed files.
+    assert WatchState.load(config.resolved_state_path).files == state.files
+
+
+def test_watch_scan_report_formats(tmp_path):
+    scan = WatchScan(
+        results=[
+            BatchJobResult(name="clip-one", status="ok", verdict="good", mos_proxy=4.2),
+            BatchJobResult(name="fail-me", status="failed", error="boom"),
+        ],
+        new_files=2,
+    )
+    assert scan.total == 2
+    assert scan.succeeded == 1
+    assert scan.failed == 1
+    report = json.loads(scan.to_json())
+    assert report["new_files"] == 2
+    assert report["jobs"][1]["error"] == "boom"
+    markdown = scan.to_markdown()
+    assert "| clip-one | ok | good | 4.2 |" in markdown
+    assert "- **fail-me**: boom" in markdown
+
+
+def test_watch_loop_picks_up_files_added_between_scans(tmp_path):
+    watch = _watch_dir(tmp_path)
+    config = _config(tmp_path, watch)
+    runner = _StubRunner()
+    seen: list[int] = []
+
+    def on_scan(scan_no, scan):
+        seen.append(scan.new_files)
+        if scan_no == 1:
+            (watch / "late-arrival.mp4").write_bytes(b"arrived late")
+
+    sleeps: list[float] = []
+    scans = watch_loop(
+        config,
+        interval_s=5.0,
+        max_scans=2,
+        runner=runner,
+        sleep=sleeps.append,
+        on_scan=on_scan,
+    )
+    assert [s.new_files for s in scans] == [2, 1]
+    assert seen == [2, 1]
+    assert sleeps == [5.0]  # slept once, between the two scans
+    assert [name for name, _, _ in runner.calls] == [
+        "clip-one",
+        "clip-two",
+        "late-arrival",
+    ]
+
+
+def test_watch_loop_rejects_bad_interval_and_scans(tmp_path):
+    watch = _watch_dir(tmp_path)
+    config = _config(tmp_path, watch)
+    with pytest.raises(WatchError, match="interval must be positive"):
+        watch_loop(config, interval_s=0, max_scans=1)
+    with pytest.raises(WatchError, match="max_scans must be positive"):
+        watch_loop(config, interval_s=1, max_scans=0)

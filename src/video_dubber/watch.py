@@ -101,9 +101,7 @@ class WatchConfig:
         if self.profiles:
             for speaker, path in self.profiles.items():
                 if not os.path.exists(path):
-                    raise WatchError(
-                        f"profile for speaker {speaker!r} not found: {path}"
-                    )
+                    raise WatchError(f"profile for speaker {speaker!r} not found: {path}")
 
     @property
     def resolved_state_path(self) -> str:
@@ -217,9 +215,7 @@ def scan_new_files(
             continue
         fingerprint = fingerprint_file(path)
         rel_path = os.path.relpath(path, watch_dir)
-        changed = rel_path in state.files and not state.is_processed(
-            rel_path, fingerprint
-        )
+        changed = rel_path in state.files and not state.is_processed(rel_path, fingerprint)
         if state.is_processed(rel_path, fingerprint):
             continue
         found.append((path, fingerprint, changed))
@@ -279,8 +275,10 @@ class WatchScan:
         lines = [
             "# Watch scan",
             "",
-            f"- New files: {self.new_files} "
-            f"({self.succeeded} ok, {self.failed} failed, {self.skipped} skipped)",
+            (
+                f"- New files: {self.new_files} "
+                f"({self.succeeded} ok, {self.failed} failed, {self.skipped} skipped)"
+            ),
             "",
             "| job | status | verdict | MOS proxy |",
             "| --- | --- | --- | --- |",
