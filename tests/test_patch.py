@@ -210,7 +210,7 @@ def test_patch_dub_without_placed_zeroes_the_whole_window():
 
 # --- refresh_report ----------------------------------------------------------
 
-from video_dubber.assemble import SegmentRow, build_report
+from video_dubber.assemble import DubReport, SegmentRow, build_report
 from video_dubber.patch import refresh_report
 
 
@@ -268,3 +268,27 @@ def test_refresh_report_rejects_unknown_row():
     ghost = SegmentRow(index=99, start=0.0, end=1.0, drift=0.0, fit_factor=1.0)
     with pytest.raises(PatchError):
         refresh_report(report, ghost)
+
+
+# --- placed_duration in report rows ------------------------------------------
+
+import json
+
+
+def test_report_rows_carry_placed_duration():
+    report, _transcript = _report()
+    for row, (_start, duration) in zip(report.segments, [(0.0, 2.0), (3.0, 2.0)]):
+        assert row.placed_duration is not None
+        assert row.placed_duration <= duration + 0.01
+    round_tripped = DubReport.from_json(report.to_json())
+    for before, after in zip(report.segments, round_tripped.segments):
+        assert after.placed_duration == pytest.approx(before.placed_duration, abs=0.001)
+
+
+def test_report_rows_from_old_json_have_no_placed_duration():
+    report, _transcript = _report()
+    payload = json.loads(report.to_json())
+    for row in payload["segments"]:
+        del row["placed_duration_s"]
+    loaded = DubReport.from_json(json.dumps(payload))
+    assert all(row.placed_duration is None for row in loaded.segments)
