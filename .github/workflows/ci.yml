@@ -25,3 +25,4 @@ jobs:
       - run: python examples/demo_report.py
       - run: python examples/demo_subtitles.py
       - run: python examples/demo_patch.py
+      - run: python examples/demo_watch.py
