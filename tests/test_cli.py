@@ -1970,3 +1970,15 @@ def test_cli_preflight_report_out(tmp_path, capsys):
     text = report.read_text(encoding="utf-8")
     assert "Pre-flight report — pass" in text
     assert "[OK] clipping" in text
+
+
+def test_cli_compare_report_out(tmp_path, capsys):
+    a = tmp_path / "a.json"
+    b = tmp_path / "b.json"
+    _write_compare_report(a)
+    _write_compare_report(b, mos_proxy=3.2)
+    report = tmp_path / "compare.md"
+    assert main(["compare", str(a), str(b), "--report-out", str(report)]) == 0
+    text = report.read_text(encoding="utf-8")
+    assert "Verdict: **A**" in text
+    assert "| MOS proxy | 4.5 | 3.2 | A |" in text
