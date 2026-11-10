@@ -153,8 +153,10 @@ class PreflightReport:
         return "\n".join(lines) + "\n"
 
 
-def _check_speech_coverage(audio: AudioData, config: PreflightConfig) -> PreflightCheck:
-    ratio = speech_ratio(audio)
+def _check_speech_coverage(
+    audio: AudioData, config: PreflightConfig, vad_config: VadConfig | None = None
+) -> PreflightCheck:
+    ratio = speech_ratio(audio, vad_config)
     if ratio <= 0.0:
         return PreflightCheck(
             "speech_coverage",
@@ -178,13 +180,15 @@ def _rms(samples: list[float]) -> float:
     return math.sqrt(sum(s * s for s in samples) / len(samples))
 
 
-def _check_snr(audio: AudioData, config: PreflightConfig) -> PreflightCheck:
+def _check_snr(
+    audio: AudioData, config: PreflightConfig, vad_config: VadConfig | None = None
+) -> PreflightCheck:
     """Speech RMS against the RMS of the gaps between speech segments.
 
     A recording with no silence to measure against (wall-to-wall speech)
     passes — there is nothing to compare with, and that is fine.
     """
-    segments = detect_speech(audio)
+    segments = detect_speech(audio, vad_config)
     if not segments:
         return PreflightCheck("snr", "warn", "cannot estimate — no speech detected", None)
     rate = audio.sample_rate
@@ -218,6 +222,54 @@ def _check_snr(audio: AudioData, config: PreflightConfig) -> PreflightCheck:
             snr_db,
         )
     return PreflightCheck("snr", "pass", f"speech {snr_db:.1f} dB above the room noise", snr_db)
+
+
+def _check_edge_silence(
+    audio: AudioData, config: PreflightConfig, vad_config: VadConfig | None = None
+) -> PreflightCheck:
+    segments = detect_speech(audio, vad_config)
+    if not segments:
+        return PreflightCheck(
+            "edge_silence", "pass", "skipped — no speech detected (see speech_coverage)", None
+        )
+    leading = segments[0].start
+    trailing = audio.duration - segments[-1].end
+    worst = max(leading, trailing)
+    if worst > config.max_edge_silence_s:
+        return PreflightCheck(
+            "edge_silence",
+            "warn",
+            f"{leading:.1f}s of silence at the start, {trailing:.1f}s at the end — trimmable dead air",
+            worst,
+        )
+    return PreflightCheck(
+        "edge_silence", "pass", f"{leading:.1f}s leading, {trailing:.1f}s trailing silence", worst
+    )
+
+
+def run_preflight(
+    audio: AudioData,
+    config: PreflightConfig | None = None,
+    vad_config: VadConfig | None = None,
+) -> PreflightReport:
+    """Run every pre-flight check on ``audio`` and return the report.
+
+    ``vad_config`` tunes the speech detection used by the coverage, SNR
+    and edge-silence checks; the default is the VAD's own default.
+    """
+    config = config or PreflightConfig()
+    return PreflightReport(
+        checks=[
+            _check_duration(audio, config),
+            _check_sample_rate(audio, config),
+            _check_clipping(audio, config),
+            _check_dc_offset(audio, config),
+            _check_level(audio, config),
+            _check_speech_coverage(audio, config, vad_config),
+            _check_snr(audio, config, vad_config),
+            _check_edge_silence(audio, config, vad_config),
+        ]
+    )
 
 
 def _check_duration(audio: AudioData, config: PreflightConfig) -> PreflightCheck:
