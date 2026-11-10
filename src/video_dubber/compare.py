@@ -124,3 +124,108 @@ class DubComparison:
             return cls.from_dict(data)
         except TypeError as exc:
             raise ValueError(str(exc)) from exc
+
+
+def _higher(name: str, a: float, b: float, detail: str) -> ComparisonMetric:
+    winner = "a" if a > b else ("b" if b > a else "tie")
+    return ComparisonMetric(name, round(a, 3), round(b, 3), winner, "higher", detail)
+
+
+def _lower(name: str, a: float, b: float, detail: str) -> ComparisonMetric:
+    winner = "a" if a < b else ("b" if b < a else "tie")
+    return ComparisonMetric(name, round(a, 3), round(b, 3), winner, "lower", detail)
+
+
+def _optional_lower(
+    name: str, a: float | None, b: float | None, detail: str
+) -> ComparisonMetric | None:
+    """A metric both reports must have; None when either side lacks it."""
+    if a is None or b is None:
+        return None
+    return _lower(name, a, b, detail)
+
+
+def _optional_higher(
+    name: str, a: float | None, b: float | None, detail: str
+) -> ComparisonMetric | None:
+    if a is None or b is None:
+        return None
+    return _higher(name, a, b, detail)
+
+
+def compare_reports(
+    a: DubReport, b: DubReport, label_a: str = "A", label_b: str = "B"
+) -> DubComparison:
+    """Compare two dub reports metric by metric.
+
+    ``Mean fit factor`` is scored on distance from 1.0 (no stretch is
+    best), and ``Loudness error`` on distance from 0 dB. The report
+    verdict (``good`` beats ``review``) is a metric too, so a dub that
+    the pipeline itself flagged as needing review cannot win on
+    numbers alone without that counting against it.
+    """
+    metrics: list[ComparisonMetric] = [
+        _higher("MOS proxy", a.mos_proxy, b.mos_proxy, "heuristic 1-5 quality score"),
+        _lower(
+            "Mean sync drift",
+            a.mean_sync_drift,
+            b.mean_sync_drift,
+            "seconds, lower is tighter to the original timing",
+        ),
+        _lower(
+            "Max sync drift",
+            a.max_sync_drift,
+            b.max_sync_drift,
+            "seconds, worst single segment",
+        ),
+        _lower(
+            "Segments over 0.10s drift",
+            float(a.segments_over_drift),
+            float(b.segments_over_drift),
+            "segments the listener would notice drifting",
+        ),
+        _lower(
+            "Mean fit factor",
+            abs(a.mean_fit_factor - 1.0),
+            abs(b.mean_fit_factor - 1.0),
+            "distance from 1.0 — no time-stretch is best",
+        ),
+        _lower(
+            "Extreme fits",
+            float(a.extreme_fits),
+            float(b.extreme_fits),
+            "segments stretched outside 0.8-1.25",
+        ),
+        ComparisonMetric(
+            "Verdict",
+            a.verdict,
+            b.verdict,
+            "a"
+            if a.verdict == "good" and b.verdict != "good"
+            else ("b" if b.verdict == "good" and a.verdict != "good" else "tie"),
+            "higher",
+            "good beats review",
+        ),
+    ]
+    optional = [
+        _optional_lower(
+            "Loudness error",
+            None if a.loudness_error_db is None else abs(a.loudness_error_db),
+            None if b.loudness_error_db is None else abs(b.loudness_error_db),
+            "dB from the original's loudness",
+        ),
+        _optional_higher(
+            "Translation coverage",
+            a.translation_coverage,
+            b.translation_coverage,
+            "fraction of words the dictionary covered",
+        ),
+        _optional_lower(
+            "Word error rate",
+            a.word_error_rate,
+            b.word_error_rate,
+            "vs the same-language reference, when one was given",
+        ),
+    ]
+    metrics.extend(m for m in optional if m is not None)
+    return DubComparison(label_a=label_a, label_b=label_b, metrics=metrics)
