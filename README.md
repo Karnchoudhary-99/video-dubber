@@ -26,6 +26,7 @@ keeping the speaker's voice.
 - [x] Pre-flight audio checks (clipping, DC offset, silence, SNR — abort a bad source before dubbing)
 - [x] Dub comparison (A/B two quality reports metric by metric, verdict + table)
 - [ ] Self-review checklist, then public
+- [x] Synthesis cache (skip re-synthesising unchanged segments, LRU eviction, `cache` CLI)
 
 ## Quick start
 
@@ -543,6 +544,31 @@ a metric only one report has is skipped, never counted as a loss.
 `--json` prints the comparison as JSON, `--report-out` writes it to a
 file. Demo: `python examples/demo_compare.py`.
 
+## Synthesis cache
+
+Synthesis is the slowest step of the pipeline, and re-dubbing an
+unchanged transcript re-renders every segment. Pass `--cache-dir` to
+`dub`, `patch` or `synthesize` and each unique line is rendered once,
+ever — a re-dub of the same transcript in the same voice is served
+entirely from the cache, and a patch re-renders only the segment it
+touches:
+
+```bash
+video-dubber dub translated.json --profile asha.json --out dub.wav \
+  --cache-dir ~/.cache/video-dubber/synth
+# cache: 2 hit(s) / 0 miss(es) (1.00 hit rate, 2 segment(s) stored)
+```
+
+The key is a hash of everything that determines the sound — cloner,
+exact text, speaker name + embedding, base pitch, speaking rate and
+sample rate — so any change to the line, the voice or the rate is a
+different entry, never a stale one. Entries are 16-bit WAVs under the
+cache directory with a JSON index; the cache evicts least-recently-used
+entries past 512 MiB / 1000 entries, and a corrupt index simply starts
+empty — the cache is an optimisation, so it never breaks a dub.
+`video-dubber cache [--cache-dir DIR]` prints entries, size and hit
+rate; `--clear` empties it. Demo: `python examples/demo_cache.py`.
+
 ## Status
 
 Audio extraction + transcription are done (62 tests). Translation is done
@@ -600,7 +626,14 @@ saved quality reports metric by metric (MOS proxy, sync drift, fit
 factors, verdict, plus loudness error, coverage and WER when both
 reports have them), with a win-count verdict broken by the MOS proxy
 and a Markdown table showing why the winner won; `dubber compare`
-takes labels and a `--json` flag. Remaining: the self-review
+takes labels and a `--json` flag. Synthesis cache is done
+(471 tests): `cache.py` content-addresses rendered segments by
+cloner, text, speaker embedding, prosody and sample rate, stores them
+as WAVs with a JSON index, evicts least-recently-used entries past
+512 MiB / 1000 entries, and serves re-dubs and patches without
+re-synthesis; `dub`/`patch`/`synthesize` take `--cache-dir` and the
+`cache` subcommand reports entries, size and hit rate (the demo's
+repeat render is 1 synthesis call, 1 cache hit). Remaining: the self-review
 checklist and public flip — the
 project stays private per the 5–7 day pace rule (started 2026-11-08,
 earliest completion 2026-11-13).
