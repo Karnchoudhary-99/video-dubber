@@ -57,6 +57,7 @@ from video_dubber.enhance import (
 from video_dubber.extract import ExtractionError, extract_audio
 from video_dubber.fidelity import FidelityError, check_fidelity
 from video_dubber.report import render_html_report
+from video_dubber.subtitles import retime_transcript
 from video_dubber.transcribe import (
     ScriptedTranscriber,
     TranscriptionError,
@@ -253,7 +254,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_dub.add_argument(
         "--subtitles",
         action="store_true",
-        help="Also write <out-stem>.srt and <out-stem>.vtt of the translated transcript.",
+        help="Also write <out-stem>.srt and <out-stem>.vtt, retimed to the "
+        "dubbed audio (cues match the placed speech, not the original windows).",
     )
     p_dub.add_argument("--original", help="Original audio WAV (for loudness matching).")
     p_dub.add_argument(
@@ -793,7 +795,10 @@ def _cmd_dub(args: argparse.Namespace) -> int:
         import os
 
         stem, _ = os.path.splitext(args.out)
-        for ext, text in (("srt", transcript.to_srt()), ("vtt", transcript.to_vtt())):
+        # Cues follow the dubbed audio: a clamped stretch ends the speech
+        # early, so original-window timings would linger over silence.
+        synced = retime_transcript(transcript, placed)
+        for ext, text in (("srt", synced.to_srt()), ("vtt", synced.to_vtt())):
             path = f"{stem}.{ext}"
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(text)

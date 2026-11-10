@@ -27,6 +27,7 @@ from video_dubber.enhance import enhance_audio
 from video_dubber.extract import extract_audio
 from video_dubber.quality import wer_from_transcripts
 from video_dubber.report import render_batch_html
+from video_dubber.subtitles import retime_transcript
 from video_dubber.transcribe import (
     ScriptedTranscriber,
     WhisperCliTranscriber,
@@ -337,13 +338,17 @@ def run_job(
         with open(translated_path, "w", encoding="utf-8") as fh:
             fh.write(translated.to_json())
         outputs["translated"] = translated_path
+        # Subtitles follow the dubbed audio, not the original windows:
+        # a clamped stretch ends the speech early, so original timings
+        # would leave the cue lingering over silence.
+        synced = retime_transcript(translated, placed)
         srt_path = os.path.join(job_dir, "translated.srt")
         with open(srt_path, "w", encoding="utf-8") as fh:
-            fh.write(translated.to_srt())
+            fh.write(synced.to_srt())
         outputs["translated_srt"] = srt_path
         vtt_path = os.path.join(job_dir, "translated.vtt")
         with open(vtt_path, "w", encoding="utf-8") as fh:
-            fh.write(translated.to_vtt())
+            fh.write(synced.to_vtt())
         outputs["translated_vtt"] = vtt_path
         report_path = os.path.join(job_dir, "report.json")
         with open(report_path, "w", encoding="utf-8") as fh:
