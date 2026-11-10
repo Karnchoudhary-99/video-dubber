@@ -27,6 +27,7 @@ Subcommands (see ``video-dubber <cmd> --help`` for details):
 """
 
 import argparse
+import os
 import sys
 
 from video_dubber import __version__
@@ -60,6 +61,7 @@ from video_dubber.enhance import (
 )
 from video_dubber.extract import ExtractionError, extract_audio
 from video_dubber.fidelity import FidelityError, check_fidelity
+from video_dubber.multilang import MultiTargetError, dub_all_targets, parse_targets
 from video_dubber.patch import PatchError, patch_dub, patch_transcript, refresh_report
 from video_dubber.report import render_html_report
 from video_dubber.subtitles import retime_transcript
@@ -291,6 +293,67 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["json", "md", "html"],
         default="json",
         help="Quality report format (default json).",
+    )
+
+    p_dub_multi = sub.add_parser(
+        "dub-multi",
+        help="Dub one source transcript into several target languages at once.",
+    )
+    p_dub_multi.add_argument("transcript", help="Source transcript JSON file.")
+    p_dub_multi.add_argument(
+        "--targets",
+        required=True,
+        help="Comma-separated target language codes, e.g. hi,es,fr.",
+    )
+    p_dub_multi.add_argument("--profile", required=True, help="Speaker profile JSON path.")
+    p_dub_multi.add_argument(
+        "--profiles",
+        help="JSON file mapping speaker names to profile JSON paths, for "
+        "multi-speaker transcripts (unlisted speakers use --profile).",
+    )
+    p_dub_multi.add_argument("--source", help="Source language code (default: transcript's).")
+    p_dub_multi.add_argument(
+        "--backend",
+        choices=["dictionary", "argos"],
+        default=None,
+        help="Translation backend (default dictionary, or backend in dubber.toml).",
+    )
+    p_dub_multi.add_argument("--glossary", help="JSON glossary file of term overrides.")
+    p_dub_multi.add_argument(
+        "--max-chars",
+        type=int,
+        help="Split long translated segments into cues of at most this many chars.",
+    )
+    p_dub_multi.add_argument("--original", help="Original audio WAV (for loudness matching).")
+    p_dub_multi.add_argument(
+        "--bed-level",
+        type=float,
+        default=None,
+        help="Keep the original's music bed under each dub at this mix level "
+        "(0-1; needs --original).",
+    )
+    p_dub_multi.add_argument(
+        "--enhance",
+        action="store_true",
+        help="Enhance each finished dub track (hum cut, noise gate, loudness "
+        "normalize to -16 dBFS); timing is preserved, no trimming.",
+    )
+    p_dub_multi.add_argument(
+        "--no-subtitles",
+        action="store_true",
+        help="Skip the per-target .srt/.vtt subtitle files.",
+    )
+    p_dub_multi.add_argument(
+        "--stop-on-error",
+        action="store_true",
+        help="Abort the whole run when one target fails (default: record the "
+        "failure in the summary and carry on with the next language).",
+    )
+    p_dub_multi.add_argument("--out-dir", required=True, help="Output directory for the bundles.")
+    p_dub_multi.add_argument(
+        "--stem",
+        default="dub",
+        help="File stem for per-target outputs: <stem>.<target>.wav etc. (default dub).",
     )
 
     p_patch = sub.add_parser(
@@ -930,6 +993,76 @@ def _cmd_dub(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_dub_multi(args: argparse.Namespace) -> int:
+    config = _load_config(args)
+    if config is None:
+        return 2
+    bed_level = args.bed_level if args.bed_level is not None else config.bed_level
+    if bed_level is not None and not args.original:
+        print("error: --bed-level needs --original", file=sys.stderr)
+        return 2
+    if bed_level is not None and not 0.0 <= bed_level <= 1.0:
+        print("error: --bed-level must be between 0 and 1", file=sys.stderr)
+        return 2
+    try:
+        targets = parse_targets(args.targets)
+    except MultiTargetError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    with open(args.transcript, encoding="utf-8") as fh:
+        transcript = Transcript.from_json(fh.read())
+    with open(args.profile, encoding="utf-8") as fh:
+        profile = SpeakerProfile.from_json(fh.read())
+    profiles = _load_profiles_map(args.profiles) if args.profiles else None
+    original = resample(load_wav(args.original), DEFAULT_SAMPLE_RATE) if args.original else None
+    source = args.source or transcript.language or config.source_language or "en"
+    backend = args.backend or config.backend
+    glossary = Glossary.from_json_file(args.glossary) if args.glossary else None
+
+    def make_translator(target: str):
+        if backend == "argos":
+            return ArgosTranslator()
+        return DictionaryTranslator(source=source, target=target)
+
+    summary = dub_all_targets(
+        transcript,
+        targets,
+        make_translator,
+        ScriptedVoiceCloner(),
+        profile,
+        args.out_dir,
+        args.stem,
+        source=source,
+        glossary=glossary,
+        max_chars=args.max_chars,
+        original=original,
+        profiles=profiles,
+        bed_level=bed_level,
+        enhance=args.enhance,
+        subtitles=not args.no_subtitles,
+        stop_on_error=args.stop_on_error,
+    )
+    summary_path = os.path.join(args.out_dir, f"{args.stem}.multilang.json")
+    with open(summary_path, "w", encoding="utf-8") as fh:
+        fh.write(summary.to_json())
+    md_path = os.path.join(args.out_dir, f"{args.stem}.multilang.md")
+    with open(md_path, "w", encoding="utf-8") as fh:
+        fh.write(summary.to_markdown())
+    for result in summary.results:
+        print(
+            f"{result.target}: {result.report.verdict} "
+            f"(MOS proxy {result.report.mos_proxy:.2f}, "
+            f"mean drift {result.report.mean_sync_drift:.3f}s, "
+            f"mean fit {result.report.mean_fit_factor:.2f}) -> {result.dub_path}"
+        )
+    for target, error in summary.failures.items():
+        print(f"{target}: FAILED — {error}", file=sys.stderr)
+    print(f"dubbed {summary.succeeded} of {len(summary.targets)} targets")
+    print(f"wrote {summary_path}")
+    print(f"wrote {md_path}")
+    return 0 if not summary.failures else 1
+
+
 def _cmd_patch(args: argparse.Namespace) -> int:
     with open(args.transcript, encoding="utf-8") as fh:
         transcript = Transcript.from_json(fh.read())
@@ -1209,6 +1342,8 @@ def main(argv=None) -> int:
             return _cmd_synthesize(args)
         if args.command == "dub":
             return _cmd_dub(args)
+        if args.command == "dub-multi":
+            return _cmd_dub_multi(args)
         if args.command == "patch":
             return _cmd_patch(args)
         if args.command == "report":
@@ -1226,6 +1361,7 @@ def main(argv=None) -> int:
         BatchError,
         DiarizeError,
         ExtractionError,
+        MultiTargetError,
         PatchError,
         TranscriptionError,
         TranslationError,
