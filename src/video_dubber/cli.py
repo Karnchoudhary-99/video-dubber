@@ -325,6 +325,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Also write <out-stem>.srt and <out-stem>.vtt, retimed to the "
         "patched audio (cues match the placed speech, not the original windows).",
     )
+    p_patch.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report the fit factor, drift and verdict the patch would produce, "
+        "without writing any files.",
+    )
 
     p_report = sub.add_parser(
         "report",
@@ -883,6 +889,35 @@ def _cmd_patch(args: argparse.Namespace) -> int:
         profiles=profiles,
         placed=placed,
     )
+    segment = [s for s in patched_transcript.segments if s.words][args.segment - 1]
+    drift = abs((segment.start + placed_duration) - segment.end)
+    refreshed = None
+    if report is not None:
+        row = SegmentRow(
+            index=args.segment,
+            start=segment.start,
+            end=segment.end,
+            drift=drift,
+            fit_factor=factor,
+            speaker=segment.speaker,
+            text=args.text,
+            placed_duration=placed_duration,
+        )
+        refreshed = refresh_report(report, row)
+    if args.dry_run:
+        # Nothing is written: the caller only learns what the patch
+        # would do (a patch that needs an extreme stretch is worth
+        # knowing about before it lands).
+        print(
+            f"dry run: segment {args.segment} would fit at {factor:.2f} "
+            f"(placed {placed_duration:.2f}s, drift {drift:.3f}s)"
+        )
+        if refreshed is not None:
+            print(
+                f"dry run: report verdict would be {refreshed.verdict} "
+                f"(MOS proxy {refreshed.mos_proxy:.2f})"
+            )
+        return 0
     save_wav(args.out, patched_audio)
     print(
         f"patched segment {args.segment} (fit {factor:.2f}, "
@@ -892,23 +927,11 @@ def _cmd_patch(args: argparse.Namespace) -> int:
         with open(args.transcript_out, "w", encoding="utf-8") as fh:
             fh.write(patched_transcript.to_json())
         print(f"wrote {args.transcript_out}")
-    if report is not None:
-        segment = [s for s in patched_transcript.segments if s.words][args.segment - 1]
-        row = SegmentRow(
-            index=args.segment,
-            start=segment.start,
-            end=segment.end,
-            drift=abs((segment.start + placed_duration) - segment.end),
-            fit_factor=factor,
-            speaker=segment.speaker,
-            text=args.text,
-            placed_duration=placed_duration,
-        )
-        report = refresh_report(report, row)
+    if refreshed is not None:
         report_out = args.report_out or args.report
         with open(report_out, "w", encoding="utf-8") as fh:
-            fh.write(report.to_json())
-        print(f"wrote {report_out} (verdict: {report.verdict})")
+            fh.write(refreshed.to_json())
+        print(f"wrote {report_out} (verdict: {refreshed.verdict})")
     if args.subtitles:
         import os
 

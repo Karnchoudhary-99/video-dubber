@@ -1568,3 +1568,41 @@ def test_cli_patch_missing_dub_fails(tmp_path, capsys):
         == 1
     )
     assert "error:" in capsys.readouterr().err
+
+
+def test_cli_patch_dry_run_writes_nothing(tmp_path, capsys):
+    dub, transcript, profile, report = _make_dubbed(tmp_path)
+    report_before = report.read_text(encoding="utf-8")
+    out = tmp_path / "patched.wav"
+    patched_transcript = tmp_path / "patched.json"
+    assert (
+        main(
+            [
+                "patch",
+                "--dub",
+                str(dub),
+                "--transcript",
+                str(transcript),
+                "--profile",
+                str(profile),
+                "--segment",
+                "2",
+                "--text",
+                "बदला हुआ",
+                "--out",
+                str(out),
+                "--transcript-out",
+                str(patched_transcript),
+                "--report",
+                str(report),
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
+    stdout = capsys.readouterr().out
+    assert "dry run: segment 2 would fit at" in stdout
+    assert "dry run: report verdict would be" in stdout
+    assert not out.exists()
+    assert not patched_transcript.exists()
+    assert report.read_text(encoding="utf-8") == report_before
