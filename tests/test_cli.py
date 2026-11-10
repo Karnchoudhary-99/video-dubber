@@ -1960,3 +1960,13 @@ def test_cli_compare_bad_report_fails(tmp_path, capsys):
     _write_compare_report(b)
     assert main(["compare", str(a), str(b)]) == 1
     assert "error" in capsys.readouterr().err
+
+
+def test_cli_preflight_report_out(tmp_path, capsys):
+    wav = tmp_path / "clean.wav"
+    _make_wav(wav)
+    report = tmp_path / "preflight.md"
+    assert main(["preflight", str(wav), "--report-out", str(report)]) == 0
+    text = report.read_text(encoding="utf-8")
+    assert "Pre-flight report — pass" in text
+    assert "[OK] clipping" in text
