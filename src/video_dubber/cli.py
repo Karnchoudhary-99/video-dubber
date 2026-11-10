@@ -268,6 +268,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_dub.add_argument("--original", help="Original audio WAV (for loudness matching).")
     p_dub.add_argument(
+        "--preflight",
+        action="store_true",
+        help="Check --original first and abort (exit 1) if it fails the "
+        "pre-flight checks, instead of dubbing a bad recording.",
+    )
+    p_dub.add_argument(
         "--bed-level",
         type=float,
         default=None,
@@ -934,7 +940,17 @@ def _cmd_dub(args: argparse.Namespace) -> int:
     with open(args.profile, encoding="utf-8") as fh:
         profile = SpeakerProfile.from_json(fh.read())
     profiles = _load_profiles_map(args.profiles) if args.profiles else None
-    original = resample(load_wav(args.original), DEFAULT_SAMPLE_RATE) if args.original else None
+    original = load_wav(args.original) if args.original else None
+    if args.preflight:
+        if original is None:
+            print("error: --preflight needs --original", file=sys.stderr)
+            return 2
+        report = run_preflight(original)
+        print(report.to_markdown(), end="")
+        if report.verdict == "fail":
+            print("pre-flight failed — dub aborted", file=sys.stderr)
+            return 1
+    original = resample(original, DEFAULT_SAMPLE_RATE) if original is not None else None
     reference = None
     if args.reference:
         with open(args.reference, encoding="utf-8") as fh:
