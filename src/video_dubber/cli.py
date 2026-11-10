@@ -14,6 +14,7 @@ Subcommands (see ``video-dubber <cmd> --help`` for details):
 * ``diarize`` — label who speaks in each transcript segment, by matching
   the segment audio against a voice library.
 * ``synthesize`` — render text as audio in a cloned voice (demo synthesis).
+* ``cache`` — inspect or clear the segment synthesis cache.
 * ``dub`` — render a full dubbed track from a translated transcript and
   a speaker profile, with a quality report (and optional video mux).
 * ``patch`` — re-dub one segment of an existing dub in place (new text,
@@ -45,6 +46,12 @@ from video_dubber.batch import (
     BatchManifest,
     run_batch,
     summarize,
+)
+from video_dubber.cache import (
+    CachedVoiceCloner,
+    CacheError,
+    SynthesisCache,
+    default_cache_dir,
 )
 from video_dubber.compare import compare_reports
 from video_dubber.config import ConfigError, DubberConfig, load_config
@@ -225,6 +232,22 @@ def build_parser() -> argparse.ArgumentParser:
     p_synth.add_argument("--wpm", type=float, help="Speaking rate override.")
     p_synth.add_argument("--semitones", type=float, default=0.0, help="Pitch shift in semitones.")
     p_synth.add_argument("--out", required=True, help="Output WAV path.")
+    p_synth.add_argument(
+        "--cache-dir",
+        help="Cache rendered segments here so re-rendering the same text in "
+        "the same voice is instant (default: no cache).",
+    )
+
+    p_cache = sub.add_parser("cache", help="Inspect or clear the synthesis cache.")
+    p_cache.add_argument(
+        "--cache-dir",
+        help="Cache directory to inspect (default: ~/.cache/video-dubber/synth).",
+    )
+    p_cache.add_argument(
+        "--clear",
+        action="store_true",
+        help="Delete every cached segment and reset the hit/miss counts.",
+    )
 
     p_diarize = sub.add_parser("diarize", help="Label who speaks in each transcript segment.")
     p_diarize.add_argument("transcript", help="Input transcript JSON file.")
@@ -268,6 +291,11 @@ def build_parser() -> argparse.ArgumentParser:
         "dubbed audio (cues match the placed speech, not the original windows).",
     )
     p_dub.add_argument("--original", help="Original audio WAV (for loudness matching).")
+    p_dub.add_argument(
+        "--cache-dir",
+        help="Cache rendered segments here so re-dubbing the same transcript "
+        "in the same voice skips synthesis (default: no cache).",
+    )
     p_dub.add_argument(
         "--preflight",
         action="store_true",
@@ -383,6 +411,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_patch.add_argument("--text", required=True, help="Replacement text for the segment.")
     p_patch.add_argument("--original", help="Original audio WAV (for loudness matching).")
+    p_patch.add_argument(
+        "--cache-dir",
+        help="Cache the re-rendered segment here so patching the same text "
+        "again is instant (default: no cache).",
+    )
     p_patch.add_argument("--out", required=True, help="Output patched WAV path.")
     p_patch.add_argument("--transcript-out", help="Write the patched transcript JSON here.")
     p_patch.add_argument(
@@ -887,17 +920,57 @@ def _cmd_diarize(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cached_cloner(args: argparse.Namespace) -> CachedVoiceCloner | ScriptedVoiceCloner:
+    """The voice cloner for a command, wrapped in the synthesis cache when asked.
+
+    ``--cache-dir`` opts a command into caching; without it the plain
+    scripted cloner runs, so existing behaviour (and tests) are
+    untouched. The returned object always satisfies the VoiceCloner
+    protocol, so callers never branch on which one they got.
+    """
+    inner = ScriptedVoiceCloner()
+    cache_dir = getattr(args, "cache_dir", None)
+    if cache_dir is None:
+        return inner
+    return CachedVoiceCloner(inner, SynthesisCache(cache_dir))
+
+
+def _cache_summary(cloner: CachedVoiceCloner | ScriptedVoiceCloner) -> str | None:
+    """One-line cache report for a command that used a cached cloner."""
+    if not isinstance(cloner, CachedVoiceCloner):
+        return None
+    return (
+        f"cache: {cloner.hits} hit(s) / {cloner.misses} miss(es) "
+        f"({cloner.cache.stats().hit_rate:.2f} hit rate, "
+        f"{cloner.cache.stats().entries} segment(s) stored)"
+    )
+
+
+def _cmd_cache(args: argparse.Namespace) -> int:
+    cache = SynthesisCache(args.cache_dir or default_cache_dir())
+    if args.clear:
+        removed = cache.clear()
+        print(f"cleared {removed} cached segment(s) from {cache.directory}")
+        return 0
+    print(f"cache directory: {cache.directory}")
+    print(cache.stats().to_markdown(), end="")
+    return 0
+
+
 def _cmd_synthesize(args: argparse.Namespace) -> int:
     with open(args.profile, encoding="utf-8") as fh:
         profile = SpeakerProfile.from_json(fh.read())
     if args.semitones or args.wpm:
         profile = adjust_prosody(profile, semitones=args.semitones, words_per_minute=args.wpm)
-    audio = ScriptedVoiceCloner().synthesize(args.text, profile)
+    cloner = _cached_cloner(args)
+    audio = cloner.synthesize(args.text, profile)
     save_wav(args.out, audio)
     print(
         f"synthesized {len(args.text.split())} words in {profile.name}'s voice: "
         f"{audio.duration:.2f}s -> {args.out}"
     )
+    if isinstance(cloner, CachedVoiceCloner):
+        print(f"cache {'hit' if cloner.hits else 'miss'} ({_cache_summary(cloner)})")
     return 0
 
 
@@ -968,9 +1041,10 @@ def _cmd_dub(args: argparse.Namespace) -> int:
     if args.reference:
         with open(args.reference, encoding="utf-8") as fh:
             reference = Transcript.from_json(fh.read())
+    cloner = _cached_cloner(args)
     dub_audio, fit_factors, placed = dub_transcript(
         transcript,
-        ScriptedVoiceCloner(),
+        cloner,
         profile,
         original,
         profiles=profiles,
@@ -993,6 +1067,9 @@ def _cmd_dub(args: argparse.Namespace) -> int:
         enhancement=enhancement,
     )
     print(f"dubbed {report.segments_dubbed} segments, {dub_audio.duration:.2f}s -> {args.out}")
+    summary = _cache_summary(cloner)
+    if summary is not None:
+        print(summary)
     print(
         f"sync drift mean {report.mean_sync_drift:.3f}s / max {report.max_sync_drift:.3f}s, "
         f"mean fit {report.mean_fit_factor:.2f}, MOS proxy {report.mos_proxy:.2f}, "
@@ -1131,12 +1208,13 @@ def _cmd_patch(args: argparse.Namespace) -> int:
             for row in report.segments
         ]
     patched_transcript = patch_transcript(transcript, args.segment, args.text)
+    cloner = _cached_cloner(args)
     patched_audio, factor, placed_duration = patch_dub(
         dub_audio,
         transcript,
         args.segment,
         args.text,
-        ScriptedVoiceCloner(),
+        cloner,
         profile,
         original,
         profiles=profiles,
@@ -1176,6 +1254,9 @@ def _cmd_patch(args: argparse.Namespace) -> int:
         f"patched segment {args.segment} (fit {factor:.2f}, "
         f"placed {placed_duration:.2f}s) -> {args.out}"
     )
+    summary = _cache_summary(cloner)
+    if summary is not None:
+        print(summary)
     if args.transcript_out:
         with open(args.transcript_out, "w", encoding="utf-8") as fh:
             fh.write(patched_transcript.to_json())
@@ -1415,6 +1496,8 @@ def main(argv=None) -> int:
             return _cmd_diarize(args)
         if args.command == "synthesize":
             return _cmd_synthesize(args)
+        if args.command == "cache":
+            return _cmd_cache(args)
         if args.command == "dub":
             return _cmd_dub(args)
         if args.command == "dub-multi":
@@ -1438,6 +1521,7 @@ def main(argv=None) -> int:
     except (
         AssemblyError,
         BatchError,
+        CacheError,
         DiarizeError,
         ExtractionError,
         MultiTargetError,
