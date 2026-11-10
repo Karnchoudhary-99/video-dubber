@@ -257,6 +257,7 @@ class SegmentRow:
     fit_factor: float
     speaker: str | None = None
     text: str = ""
+    placed_duration: float | None = None  # length of the clip actually placed, None in old reports
 
     def to_dict(self) -> dict:
         return {
@@ -267,6 +268,9 @@ class SegmentRow:
             "fit_factor": round(self.fit_factor, 3),
             "speaker": self.speaker,
             "text": self.text,
+            "placed_duration_s": (
+                None if self.placed_duration is None else round(self.placed_duration, 3)
+            ),
         }
 
     @classmethod
@@ -281,6 +285,7 @@ class SegmentRow:
                 fit_factor=float(data["fit_factor"]),
                 speaker=data.get("speaker"),
                 text=str(data.get("text", "")),
+                placed_duration=data.get("placed_duration_s"),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError(f"not a valid segment row: {exc}") from exc
@@ -453,12 +458,14 @@ def build_report(
             fit_factor=factor,
             speaker=segment.speaker,
             text=segment.text,
+            placed_duration=duration,
         )
-        for i, (segment, drift, factor) in enumerate(
+        for i, (segment, drift, factor, (_start, duration)) in enumerate(
             zip(
                 timed,
                 drifts,
                 fit_factors if len(fit_factors) == len(timed) else [1.0] * len(timed),
+                placed,
             )
         )
     ]
