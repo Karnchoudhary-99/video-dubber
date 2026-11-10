@@ -52,9 +52,7 @@ def retime_transcript(
         raise SubtitleError(f"min_cue_s must be non-negative, got {min_cue_s}")
     timed = [segment for segment in transcript.segments if segment.words]
     if len(placed) != len(timed):
-        raise SubtitleError(
-            f"placed has {len(placed)} spans for {len(timed)} timed segments"
-        )
+        raise SubtitleError(f"placed has {len(placed)} spans for {len(timed)} timed segments")
     for start, duration in placed:
         if start < 0:
             raise SubtitleError(f"placed span starts before 0: {start}")
