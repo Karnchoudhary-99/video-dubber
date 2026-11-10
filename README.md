@@ -20,6 +20,7 @@ keeping the speaker's voice.
 - [x] Project config file (dubber.toml defaults for translate/dub/enhance/diarize)
 - [x] HTML quality reports (per-segment table, verdict banner, batch summary)
 - [x] Dub-synced subtitles (SRT/VTT retimed to the placed dub audio)
+- [x] Segment patching (re-dub one segment in place, refresh report)
 - [ ] Self-review checklist, then public
 
 ## Quick start
@@ -401,6 +402,32 @@ video-dubber dub translated.json --profile asha.json --out dubbed.wav \
 - A report saved as JSON can be re-rendered later without re-dubbing:
   `video-dubber report report.json --out report.html` (or `--format md`).
 
+## Segment patching
+
+One bad line should not cost a full re-dub. `patch` re-synthesises a
+single segment in its speaker's voice, fits it to the same window,
+loudness-matches it to the clip it replaces, and splices it into the
+existing dub — only the old placed span is zeroed, so a music bed
+under the rest of the track is bit-identical:
+
+```bash
+video-dubber patch --dub dubbed.wav --transcript translated.json \
+  --profile asha.json --segment 2 --text "corrected line" \
+  --out patched.wav --transcript-out patched.json \
+  --report report.json --report-out patched-report.json --subtitles
+```
+
+- Segments are numbered 1-based among timed segments — the same
+  numbering the quality report's per-segment rows use.
+- The patched transcript's words are retimed proportionally across the
+  segment's original window, so subtitles and reports stay consistent.
+- The refreshed report recomputes every dependent aggregate (drift,
+  fit factors, MOS proxy, verdict) from the updated row; a patch that
+  needs an extreme stretch flips the verdict to `review` honestly
+  instead of hiding it.
+- Demo: `python examples/demo_patch.py` — the patched line's 1.43x fit
+  flips the verdict to `review` while segment 1 stays bit-identical.
+
 ## Status
 
 Audio extraction + transcription are done (62 tests). Translation is done
@@ -429,7 +456,14 @@ rescales each segment's words into its placed span, so `dub --subtitles`
 and batch `translated.srt`/`.vtt` cues end when the dubbed speech ends
 instead of lingering to the original window's end after a clamped
 stretch; short cues stretch to a 0.5s readable minimum without ever
-overlapping the next cue. Remaining: the self-review checklist and public flip — the
+overlapping the next cue. Segment patching is done (372 tests):
+`patch_transcript` / `patch_dub` / `refresh_report` plus the `patch`
+CLI subcommand — one segment re-synthesised, fitted and loudness-matched
+to the clip it replaces, spliced in with only its placed span zeroed,
+and the saved report's aggregates recomputed (the demo's patched line
+needs a 1.43x fit, so its verdict honestly flips to `review`); report
+rows now also record each clip's placed duration, so a later patch and
+subtitle retiming use the exact span. Remaining: the self-review checklist and public flip — the
 project stays private per the 5–7 day pace rule (started 2026-11-08,
 earliest completion 2026-11-13).
 
