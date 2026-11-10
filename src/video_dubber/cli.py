@@ -22,6 +22,7 @@ Subcommands (see ``video-dubber <cmd> --help`` for details):
 * ``enhance`` — clean up a WAV: trim silence, cut hum, gate room noise,
   normalize loudness to a target RMS.
 * ``batch`` — dub many videos/transcripts from one manifest JSON file.
+* ``watch`` — dub every new video that lands in a folder, as it appears.
 * ``config`` — show the effective configuration (dubber.toml defaults).
 """
 
@@ -85,6 +86,7 @@ from video_dubber.voice import (
     VoiceLibrary,
     adjust_prosody,
 )
+from video_dubber.watch import WatchConfig, WatchError, watch_loop
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -405,6 +407,80 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["json", "toml"],
         default="json",
         help="Output format (default json).",
+    )
+
+    p_watch = sub.add_parser(
+        "watch", help="Dub every new video that lands in a folder, as it appears."
+    )
+    p_watch.add_argument("watch_dir", help="Folder to watch for new media files.")
+    p_watch.add_argument("--out-dir", required=True, help="Output directory; one subdir per job.")
+    p_watch.add_argument(
+        "--target",
+        help="Target language code (default: target_language from dubber.toml).",
+    )
+    p_watch.add_argument("--profile", required=True, help="Speaker profile JSON path.")
+    p_watch.add_argument(
+        "--source",
+        help="Source language code (default: source_language from dubber.toml).",
+    )
+    p_watch.add_argument(
+        "--backend",
+        choices=["whisper", "scripted"],
+        default="whisper",
+        help="Transcription backend (default whisper).",
+    )
+    p_watch.add_argument("--model", default="tiny", help="Whisper model (default tiny).")
+    p_watch.add_argument("--script", help="Scripted-backend word list (JSON).")
+    p_watch.add_argument("--glossary", help="Glossary JSON file (pinned translations).")
+    p_watch.add_argument("--max-chars", type=int, help="Max characters per subtitle cue.")
+    p_watch.add_argument(
+        "--no-mux",
+        action="store_true",
+        help="Skip muxing the dub back into the video.",
+    )
+    p_watch.add_argument(
+        "--profiles",
+        help="JSON file mapping speaker names to profile JSON paths, for "
+        "multi-speaker videos (unlisted speakers use --profile).",
+    )
+    p_watch.add_argument(
+        "--bed-level",
+        type=float,
+        default=None,
+        help="Keep the video's music bed under the dub at this mix level "
+        "(0-1; default: bed_level from dubber.toml).",
+    )
+    p_watch.add_argument(
+        "--enhance",
+        action="store_true",
+        help="Enhance each finished dub track (hum cut, noise gate, loudness "
+        "normalize to -16 dBFS); timing is preserved, no trimming.",
+    )
+    p_watch.add_argument(
+        "--state",
+        help="State file path (default <out-dir>/.dubber-watch.json).",
+    )
+    p_watch.add_argument(
+        "--interval",
+        type=float,
+        default=60.0,
+        help="Seconds between scans (default 60).",
+    )
+    p_watch.add_argument(
+        "--once",
+        action="store_true",
+        help="Scan once and exit instead of polling forever.",
+    )
+    p_watch.add_argument(
+        "--scans",
+        type=int,
+        default=None,
+        help="Stop after this many scans (for scripting; --once is 1 scan).",
+    )
+    p_watch.add_argument(
+        "--extensions",
+        help="Comma-separated media extensions to watch "
+        "(default mp4,mkv,mov,webm,avi,wav,mp3,flac,m4a,ogg).",
     )
     return parser
 
@@ -1015,6 +1091,97 @@ def _cmd_batch(args: argparse.Namespace) -> int:
     return 1 if summary.failed else 0
 
 
+def _load_profiles_paths(path: str) -> dict[str, str]:
+    """Load a speaker-name -> profile-path JSON map (paths, not profiles)."""
+    import json
+
+    try:
+        with open(path, encoding="utf-8") as fh:
+            raw = json.load(fh)
+    except OSError as exc:
+        raise VoiceCloneError(f"cannot read profiles map {path!r}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise VoiceCloneError(f"profiles map {path!r} is not valid JSON: {exc}") from exc
+    if not isinstance(raw, dict) or not all(
+        isinstance(key, str) and isinstance(value, str) for key, value in raw.items()
+    ):
+        raise VoiceCloneError(f"profiles map {path!r} must be a JSON object of strings")
+    return raw
+
+
+def _cmd_watch(args: argparse.Namespace) -> int:
+    config = _load_config(args)
+    if config is None:
+        return 2
+    target = args.target or config.target_language
+    if not target:
+        print(
+            "error: watch needs --target or target_language in dubber.toml",
+            file=sys.stderr,
+        )
+        return 2
+    if args.once and args.scans is not None:
+        print("error: --once and --scans conflict; use one", file=sys.stderr)
+        return 2
+    extensions = None
+    if args.extensions is not None:
+        extensions = tuple(
+            ext if ext.startswith(".") else f".{ext}"
+            for ext in (part.strip().lower() for part in args.extensions.split(","))
+            if ext
+        )
+    watch_kwargs: dict = {}
+    if extensions is not None:
+        watch_kwargs["extensions"] = extensions
+    watch_config = WatchConfig(
+        watch_dir=args.watch_dir,
+        out_dir=args.out_dir,
+        target=target,
+        profile=args.profile,
+        source=args.source or config.source_language,
+        backend=args.backend,
+        model=args.model,
+        script=args.script,
+        glossary=args.glossary,
+        max_chars=args.max_chars,
+        mux=not args.no_mux,
+        profiles=_load_profiles_paths(args.profiles) if args.profiles else None,
+        bed_level=args.bed_level if args.bed_level is not None else config.bed_level,
+        enhance=args.enhance,
+        state_path=args.state,
+        **watch_kwargs,
+    )
+    max_scans = 1 if args.once else args.scans
+    any_failed = False
+
+    def on_scan(scan_no: int, scan) -> None:
+        nonlocal any_failed
+        for result in scan.results:
+            if result.status == "ok":
+                print(
+                    f"ok {result.name} (verdict {result.verdict}, "
+                    f"MOS proxy {result.mos_proxy}, {result.duration_s:.1f}s)"
+                )
+            elif result.status == "skipped":
+                print(f"skipped {result.name} (dubbed WAV already exists)")
+            else:
+                print(f"failed {result.name}: {result.error}", file=sys.stderr)
+        print(
+            f"scan {scan_no}: {scan.new_files} new, {scan.succeeded} ok, "
+            f"{scan.failed} failed, {scan.skipped} skipped"
+        )
+        if scan.failed:
+            any_failed = True
+
+    watch_loop(
+        watch_config,
+        interval_s=args.interval,
+        max_scans=max_scans,
+        on_scan=on_scan,
+    )
+    return 1 if any_failed else 0
+
+
 def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -1050,6 +1217,8 @@ def main(argv=None) -> int:
             return _cmd_enhance(args)
         if args.command == "batch":
             return _cmd_batch(args)
+        if args.command == "watch":
+            return _cmd_watch(args)
         if args.command == "config":
             return _cmd_config(args)
     except (
@@ -1061,6 +1230,7 @@ def main(argv=None) -> int:
         TranscriptionError,
         TranslationError,
         VoiceCloneError,
+        WatchError,
         ValueError,
         OSError,
     ) as exc:

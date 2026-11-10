@@ -1669,3 +1669,133 @@ def test_cli_patch_leaves_music_bed_untouched(tmp_path):
     # is bit-identical; only the patched segment's span changed.
     assert after.samples[: 2 * 16_000] == before.samples[: 2 * 16_000]
     assert after.samples[2 * 16_000 :] != before.samples[2 * 16_000 :]
+
+
+# --- watch subcommand --------------------------------------------------------
+
+
+def _watch_fixture(tmp_path):
+    """A watch dir with one WAV file + scripted word list; returns paths."""
+    watch = tmp_path / "watch"
+    watch.mkdir()
+    audio = watch / "morning clip.wav"
+    save_wav(str(audio), make_sine(440.0, 2.0, amplitude=0.5))
+    script = tmp_path / "words.json"
+    script.write_text(
+        json.dumps(
+            [
+                {"text": "Hello", "start": 0.0, "end": 0.4},
+                {"text": "and", "start": 0.4, "end": 0.6},
+                {"text": "welcome", "start": 0.6, "end": 1.1},
+                {"text": "to", "start": 1.1, "end": 1.3},
+                {"text": "Mars", "start": 1.3, "end": 1.7},
+            ]
+        )
+    )
+    profile = tmp_path / "asha.json"
+    _write_dub_profile(profile)
+    return watch, script, profile, tmp_path / "out"
+
+
+def _watch_args(watch, script, profile, out, extra=None):
+    args = [
+        "watch",
+        str(watch),
+        "--out-dir",
+        str(out),
+        "--target",
+        "hi",
+        "--profile",
+        str(profile),
+        "--backend",
+        "scripted",
+        "--script",
+        str(script),
+        "--once",
+        "--no-mux",
+    ]
+    return args + (extra or [])
+
+
+def test_cli_watch_dubs_new_file_and_remembers_it(tmp_path, capsys):
+    watch, script, profile, out = _watch_fixture(tmp_path)
+    assert main(_watch_args(watch, script, profile, out)) == 0
+    assert (out / "morning-clip" / "dubbed.wav").exists()
+    assert (out / ".dubber-watch.json").exists()
+    output = capsys.readouterr().out
+    assert "ok morning-clip" in output
+    assert "scan 1: 1 new, 1 ok, 0 failed, 0 skipped" in output
+    # Second scan: the file is already dubbed, nothing to do.
+    assert main(_watch_args(watch, script, profile, out)) == 0
+    assert "scan 1: 0 new, 0 ok, 0 failed, 0 skipped" in capsys.readouterr().out
+
+
+def test_cli_watch_empty_dir(tmp_path, capsys):
+    watch = tmp_path / "watch"
+    watch.mkdir()
+    profile = tmp_path / "asha.json"
+    _write_dub_profile(profile)
+    assert (
+        main(
+            [
+                "watch",
+                str(watch),
+                "--out-dir",
+                str(tmp_path / "out"),
+                "--target",
+                "hi",
+                "--profile",
+                str(profile),
+                "--once",
+            ]
+        )
+        == 0
+    )
+    assert (tmp_path / "out" / ".dubber-watch.json").exists()
+    assert "scan 1: 0 new" in capsys.readouterr().out
+
+
+def test_cli_watch_missing_dir_fails(tmp_path, capsys):
+    profile = tmp_path / "asha.json"
+    _write_dub_profile(profile)
+    assert (
+        main(
+            [
+                "watch",
+                str(tmp_path / "missing"),
+                "--out-dir",
+                str(tmp_path / "out"),
+                "--target",
+                "hi",
+                "--profile",
+                str(profile),
+                "--once",
+            ]
+        )
+        == 1
+    )
+    assert "error:" in capsys.readouterr().err
+
+
+def test_cli_watch_needs_target(tmp_path, capsys, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # no dubber.toml here, so no config target
+    watch, script, profile, out = _watch_fixture(tmp_path)
+    args = _watch_args(watch, script, profile, out)
+    args.remove("--target")
+    args.remove("hi")
+    assert main(args) == 2
+    assert "needs --target" in capsys.readouterr().err
+
+
+def test_cli_watch_once_and_scans_conflict(tmp_path, capsys):
+    watch, script, profile, out = _watch_fixture(tmp_path)
+    assert main(_watch_args(watch, script, profile, out, ["--scans", "2"])) == 2
+    assert "conflict" in capsys.readouterr().err
+
+
+def test_cli_watch_extensions_filter(tmp_path, capsys):
+    watch, script, profile, out = _watch_fixture(tmp_path)
+    (watch / "notes.txt").write_text("not media")
+    assert main(_watch_args(watch, script, profile, out, ["--extensions", "wav"])) == 0
+    assert (out / "morning-clip" / "dubbed.wav").exists()
+    assert "scan 1: 1 new" in capsys.readouterr().out
