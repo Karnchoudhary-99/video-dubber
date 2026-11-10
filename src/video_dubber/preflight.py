@@ -153,6 +153,73 @@ class PreflightReport:
         return "\n".join(lines) + "\n"
 
 
+def _check_speech_coverage(audio: AudioData, config: PreflightConfig) -> PreflightCheck:
+    ratio = speech_ratio(audio)
+    if ratio <= 0.0:
+        return PreflightCheck(
+            "speech_coverage",
+            "fail",
+            "no speech detected — check this is a voice recording, not music or silence",
+            ratio,
+        )
+    if ratio < config.min_speech_ratio:
+        return PreflightCheck(
+            "speech_coverage",
+            "warn",
+            f"only {ratio:.0%} of the file is speech — mostly dead air or noise",
+            ratio,
+        )
+    return PreflightCheck("speech_coverage", "pass", f"{ratio:.0%} of the file is speech", ratio)
+
+
+def _rms(samples: list[float]) -> float:
+    if not samples:
+        return 0.0
+    return math.sqrt(sum(s * s for s in samples) / len(samples))
+
+
+def _check_snr(audio: AudioData, config: PreflightConfig) -> PreflightCheck:
+    """Speech RMS against the RMS of the gaps between speech segments.
+
+    A recording with no silence to measure against (wall-to-wall speech)
+    passes — there is nothing to compare with, and that is fine.
+    """
+    segments = detect_speech(audio)
+    if not segments:
+        return PreflightCheck("snr", "warn", "cannot estimate — no speech detected", None)
+    rate = audio.sample_rate
+    speech_samples: list[float] = []
+    gap_samples: list[float] = []
+    cursor = 0
+    for seg in segments:
+        start = int(seg.start * rate)
+        end = int(seg.end * rate)
+        gap_samples.extend(audio.samples[cursor:start])
+        speech_samples.extend(audio.samples[start:end])
+        cursor = end
+    gap_samples.extend(audio.samples[cursor:])
+    speech_rms = _rms(speech_samples)
+    gap_rms = _rms(gap_samples)
+    if gap_rms <= 0.0:
+        return PreflightCheck("snr", "pass", "no silence between segments to measure against", None)
+    snr_db = 20 * math.log10(speech_rms / gap_rms) if speech_rms > 0.0 else float("-inf")
+    if snr_db < config.fail_snr_db:
+        return PreflightCheck(
+            "snr",
+            "fail",
+            f"speech is only {snr_db:.1f} dB above the room noise — transcription will struggle",
+            snr_db,
+        )
+    if snr_db < config.min_snr_db:
+        return PreflightCheck(
+            "snr",
+            "warn",
+            f"speech is {snr_db:.1f} dB above the room noise — consider a quieter room",
+            snr_db,
+        )
+    return PreflightCheck("snr", "pass", f"speech {snr_db:.1f} dB above the room noise", snr_db)
+
+
 def _check_duration(audio: AudioData, config: PreflightConfig) -> PreflightCheck:
     duration = audio.duration
     if duration <= 0.0:
