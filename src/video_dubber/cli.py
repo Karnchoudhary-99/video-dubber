@@ -46,6 +46,7 @@ from video_dubber.batch import (
     run_batch,
     summarize,
 )
+from video_dubber.compare import compare_reports
 from video_dubber.config import ConfigError, DubberConfig, load_config
 from video_dubber.diarize import (
     DEFAULT_THRESHOLD,
@@ -469,6 +470,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--fail-on-warn",
         action="store_true",
         help="Exit 1 on warnings too, not just failures.",
+    )
+
+    p_compare = sub.add_parser(
+        "compare", help="Compare two dub quality reports (JSON) metric by metric."
+    )
+    p_compare.add_argument("report_a", help="First dub quality report (JSON).")
+    p_compare.add_argument("report_b", help="Second dub quality report (JSON).")
+    p_compare.add_argument("--label-a", default="A", help="Name for the first dub (default A).")
+    p_compare.add_argument("--label-b", default="B", help="Name for the second dub (default B).")
+    p_compare.add_argument("--json", action="store_true", help="Print the comparison as JSON.")
+    p_compare.add_argument(
+        "--report-out", help="Write the comparison (Markdown, or JSON with --json) here."
     )
 
     p_batch = sub.add_parser("batch", help="Dub many jobs from a manifest JSON file.")
@@ -1245,6 +1258,21 @@ def _cmd_preflight(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_compare(args: argparse.Namespace) -> int:
+    with open(args.report_a, encoding="utf-8") as fh:
+        report_a = DubReport.from_json(fh.read())
+    with open(args.report_b, encoding="utf-8") as fh:
+        report_b = DubReport.from_json(fh.read())
+    comparison = compare_reports(report_a, report_b, args.label_a, args.label_b)
+    text = comparison.to_json() if args.json else comparison.to_markdown()
+    print(text, end="" if text.endswith("\n") else "\n")
+    if args.report_out:
+        with open(args.report_out, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        print(f"wrote {args.report_out}")
+    return 0
+
+
 def _cmd_batch(args: argparse.Namespace) -> int:
     manifest = BatchManifest.from_json_file(args.manifest)
     results = run_batch(manifest, args.out_dir, force=args.force, stop_on_error=args.stop_on_error)
@@ -1399,6 +1427,8 @@ def main(argv=None) -> int:
             return _cmd_enhance(args)
         if args.command == "preflight":
             return _cmd_preflight(args)
+        if args.command == "compare":
+            return _cmd_compare(args)
         if args.command == "batch":
             return _cmd_batch(args)
         if args.command == "watch":
