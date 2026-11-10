@@ -24,6 +24,7 @@ keeping the speaker's voice.
 - [x] Watch-folder mode (dub new files as they land, persistent state)
 - [x] Multi-target dubbing (one source → several languages, per-language bundles + summary)
 - [x] Pre-flight audio checks (clipping, DC offset, silence, SNR — abort a bad source before dubbing)
+- [x] Dub comparison (A/B two quality reports metric by metric, verdict + table)
 - [ ] Self-review checklist, then public
 
 ## Quick start
@@ -522,6 +523,26 @@ when the source fails. Demo: `python examples/demo_preflight.py` —
 a clean recording passes, a clipped one fails on clipping and DC
 offset, a silent one on level and speech coverage.
 
+## Dub comparison
+
+Two dubs of the same source — different voices, different backends,
+before/after a fix — and the question is which one is better. Compare
+their saved quality reports instead of trusting your ears alone:
+
+```bash
+video-dubber compare asha.report.json ravi.report.json \
+  --label-a asha --label-b ravi
+```
+
+It scores MOS proxy, mean/max sync drift, segments over drift, mean
+fit factor (distance from 1.0), extreme fits, the report verdict, and
+— when both reports have them — loudness error, translation coverage
+and WER, one row per metric with its winner. The overall verdict goes
+to the side that wins more metrics, ties broken by the MOS proxy;
+a metric only one report has is skipped, never counted as a loss.
+`--json` prints the comparison as JSON, `--report-out` writes it to a
+file. Demo: `python examples/demo_compare.py`.
+
 ## Status
 
 Audio extraction + transcription are done (62 tests). Translation is done
@@ -574,7 +595,12 @@ targets; a failing target is recorded and the run carries on unless
 peak level, VAD speech coverage, SNR and edge silence, and reports a
 `pass` / `pass_with_warnings` / `fail` verdict as Markdown or JSON;
 `dub --preflight` aborts on a failing source before any synthesis.
-Remaining: the self-review
+Dub comparison is done (452 tests): `compare_reports` scores two
+saved quality reports metric by metric (MOS proxy, sync drift, fit
+factors, verdict, plus loudness error, coverage and WER when both
+reports have them), with a win-count verdict broken by the MOS proxy
+and a Markdown table showing why the winner won; `dubber compare`
+takes labels and a `--json` flag. Remaining: the self-review
 checklist and public flip — the
 project stays private per the 5–7 day pace rule (started 2026-11-08,
 earliest completion 2026-11-13).
