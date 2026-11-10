@@ -23,6 +23,7 @@ keeping the speaker's voice.
 - [x] Segment patching (re-dub one segment in place, refresh report)
 - [x] Watch-folder mode (dub new files as they land, persistent state)
 - [x] Multi-target dubbing (one source → several languages, per-language bundles + summary)
+- [x] Pre-flight audio checks (clipping, DC offset, silence, SNR — abort a bad source before dubbing)
 - [ ] Self-review checklist, then public
 
 ## Quick start
@@ -500,6 +501,27 @@ video-dubber dub-multi source.json --targets hi,es,fr \
   into Hindi and Spanish; the Hindi dub needs a 0.66x mean fit on the
   demo's short windows, so its verdict honestly reads `review`.
 
+## Pre-flight audio checks
+
+Dubbing a clipped, silent, or noisy recording wastes a whole pipeline
+run and produces a bad dub. Check the source first:
+
+```bash
+video-dubber preflight source.wav
+```
+
+It measures eight things — duration, sample rate (anything but 16 kHz
+is resampled, so that is a warning), clipping, DC offset, peak level,
+speech coverage (VAD), SNR (speech RMS vs the gaps between segments),
+and leading/trailing silence — and prints a `pass` /
+`pass_with_warnings` / `fail` verdict with one plain-language line per
+check. `--json` prints the report as JSON, `--report-out` writes it to
+a file, and `--fail-on-warn` exits 1 on warnings too. `dub --preflight`
+runs the same checks on `--original` and aborts before any synthesis
+when the source fails. Demo: `python examples/demo_preflight.py` —
+a clean recording passes, a clipped one fails on clipping and DC
+offset, a silent one on level and speech coverage.
+
 ## Status
 
 Audio extraction + transcription are done (62 tests). Translation is done
@@ -547,7 +569,12 @@ and `--scans` make single scans scriptable. Multi-target dubbing is done
 languages in one run, writing a per-language bundle (dubbed WAV, quality
 report, dub-synced subtitles) plus a JSON/Markdown summary comparing the
 targets; a failing target is recorded and the run carries on unless
-`--stop-on-error` is set. Remaining: the self-review
+`--stop-on-error` is set. Pre-flight audio checks are done (437 tests):
+`preflight.py` measures duration, sample rate, clipping, DC offset,
+peak level, VAD speech coverage, SNR and edge silence, and reports a
+`pass` / `pass_with_warnings` / `fail` verdict as Markdown or JSON;
+`dub --preflight` aborts on a failing source before any synthesis.
+Remaining: the self-review
 checklist and public flip — the
 project stays private per the 5–7 day pace rule (started 2026-11-08,
 earliest completion 2026-11-13).

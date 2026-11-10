@@ -63,6 +63,7 @@ from video_dubber.extract import ExtractionError, extract_audio
 from video_dubber.fidelity import FidelityError, check_fidelity
 from video_dubber.multilang import MultiTargetError, dub_all_targets, parse_targets
 from video_dubber.patch import PatchError, patch_dub, patch_transcript, refresh_report
+from video_dubber.preflight import run_preflight
 from video_dubber.report import render_html_report
 from video_dubber.subtitles import retime_transcript
 from video_dubber.transcribe import (
@@ -267,6 +268,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_dub.add_argument("--original", help="Original audio WAV (for loudness matching).")
     p_dub.add_argument(
+        "--preflight",
+        action="store_true",
+        help="Check --original first and abort (exit 1) if it fails the "
+        "pre-flight checks, instead of dubbing a bad recording.",
+    )
+    p_dub.add_argument(
         "--bed-level",
         type=float,
         default=None,
@@ -449,6 +456,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Keep leading/trailing silence (needed for timed dub tracks).",
     )
     p_enhance.add_argument("--report-out", help="Write the enhancement report (Markdown) here.")
+
+    p_preflight = sub.add_parser(
+        "preflight", help="Check a source WAV before dubbing (clipping, silence, SNR)."
+    )
+    p_preflight.add_argument("input", help="Input WAV file to check.")
+    p_preflight.add_argument("--json", action="store_true", help="Print the report as JSON.")
+    p_preflight.add_argument(
+        "--report-out", help="Write the pre-flight report (Markdown, or JSON with --json) here."
+    )
+    p_preflight.add_argument(
+        "--fail-on-warn",
+        action="store_true",
+        help="Exit 1 on warnings too, not just failures.",
+    )
 
     p_batch = sub.add_parser("batch", help="Dub many jobs from a manifest JSON file.")
     p_batch.add_argument("manifest", help="Manifest JSON file (see README for the format).")
@@ -919,7 +940,17 @@ def _cmd_dub(args: argparse.Namespace) -> int:
     with open(args.profile, encoding="utf-8") as fh:
         profile = SpeakerProfile.from_json(fh.read())
     profiles = _load_profiles_map(args.profiles) if args.profiles else None
-    original = resample(load_wav(args.original), DEFAULT_SAMPLE_RATE) if args.original else None
+    original = load_wav(args.original) if args.original else None
+    if args.preflight:
+        if original is None:
+            print("error: --preflight needs --original", file=sys.stderr)
+            return 2
+        report = run_preflight(original)
+        print(report.to_markdown(), end="")
+        if report.verdict == "fail":
+            print("pre-flight failed — dub aborted", file=sys.stderr)
+            return 1
+    original = resample(original, DEFAULT_SAMPLE_RATE) if original is not None else None
     reference = None
     if args.reference:
         with open(args.reference, encoding="utf-8") as fh:
@@ -1198,6 +1229,22 @@ def _cmd_enhance(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_preflight(args: argparse.Namespace) -> int:
+    audio = load_wav(args.input)
+    report = run_preflight(audio)
+    text = report.to_json() if args.json else report.to_markdown()
+    print(text, end="" if text.endswith("\n") else "\n")
+    if args.report_out:
+        with open(args.report_out, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        print(f"wrote {args.report_out}")
+    if report.verdict == "fail":
+        return 1
+    if report.verdict == "pass_with_warnings" and args.fail_on_warn:
+        return 1
+    return 0
+
+
 def _cmd_batch(args: argparse.Namespace) -> int:
     manifest = BatchManifest.from_json_file(args.manifest)
     results = run_batch(manifest, args.out_dir, force=args.force, stop_on_error=args.stop_on_error)
@@ -1350,6 +1397,8 @@ def main(argv=None) -> int:
             return _cmd_report(args)
         if args.command == "enhance":
             return _cmd_enhance(args)
+        if args.command == "preflight":
+            return _cmd_preflight(args)
         if args.command == "batch":
             return _cmd_batch(args)
         if args.command == "watch":
