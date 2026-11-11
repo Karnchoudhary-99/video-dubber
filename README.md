@@ -31,6 +31,7 @@ keeping the speaker's voice.
 - [x] Segment splitting (cut long lines at silence gaps so each piece fits its window)
 - [x] Export bundle (portable dir/zip: dubbed audio, subtitles, report, manifest with SHA-256, verify)
 - [x] ASS subtitle export (styled .ass: one named colour per speaker, centisecond timings)
+- [x] Segment merging (join over-split fragments across short same-speaker gaps)
 
 ## Quick start
 
@@ -270,6 +271,37 @@ video-dubber convert transcript.json --format ass --out subs.ass
   directly, so the colours on screen match the colours in the file.
 - Demo: `python examples/demo_ass.py` — two speakers, two styles,
   cues retimed to the dubbed audio.
+
+## Segment merging
+
+Splitting is the right call for a long line, but transcription and VAD
+over-segment too: a hesitant speaker arrives as five 0.4 s fragments,
+and dubbing each one separately means five tiny syntheses, five fit
+factors, and subtitles that flash past faster than anyone can read.
+`dubber merge` is split's counterpart — it joins adjacent segments
+back into readable lines:
+
+```bash
+video-dubber merge fragments.json --out merged.json --report-out merge.md
+# # Segment merge
+# - Segments: 5 -> 2 (2 merges, 3 segments joined)
+# - Longest segment: 0.80s -> 1.60s
+```
+
+- A segment joins the group before it only when all three hold: the
+  same speaker label (`None` counts as a label, so two unlabelled
+  lines merge but Asha never merges into Ravi), the pause between them
+  is at most `--max-gap` (default 0.4s), and the combined line is at
+  most `--max-duration` (default 8.0s) long. A merged group keeps every
+  word in order with its original timings, so it dubs and subtitles
+  exactly like the input.
+- Wordless segments are copied through unchanged and break a group —
+  they carry no timing, so they can neither join nor be joined across.
+- The report (`--json` for machines) lists every join with the
+  original segment numbers (`1+2+3`), so the caller can see what
+  merged instead of trusting an average.
+- Demo: `python examples/demo_merge.py` — five fragments become two
+  lines, and the speaker change at the end stays separate.
 
 ## Speaker diarization
 
@@ -843,6 +875,14 @@ with centisecond timestamps truncated, never rounded up; `convert
 write the `.ass` next to the `.srt`/`.vtt` (the demo's two speakers
 render white and yellow, and the same file feeds `render --subtitles`
 directly).
+Segment merging is done (590 tests): `merge.py` joins adjacent
+segments across a short pause (default 0.4s) when the speakers match
+and the combined line fits one dub window (default 8.0s), keeping
+every word's original timings; wordless segments pass through and
+break a group, and the report lists every join by original segment
+number; `dubber merge` takes `--max-gap`/`--max-duration` and a
+JSON/Markdown report (the demo's five fragments become two lines,
+and the speaker change stays separate).
 Remaining: the self-review
 checklist and public flip — the
 project stays private per the 5–7 day pace rule (started 2026-11-08,
