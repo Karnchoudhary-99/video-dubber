@@ -33,6 +33,7 @@ keeping the speaker's voice.
 - [x] ASS subtitle export (styled .ass: one named colour per speaker, centisecond timings)
 - [x] Segment merging (join over-split fragments across short same-speaker gaps)
 - [x] Environment diagnostics (`dubber doctor`: tools, versions, disk space)
+- [x] Per-segment loudness levelling (`level.py`: even out line volumes, `dubber level`, `dub --level`)
 
 ## Quick start
 
@@ -337,6 +338,43 @@ video-dubber doctor
   (a full disk fails a render mid-write).
 - Demo: `python examples/demo_doctor.py` — the full diagnosis on this
   machine, with the report asserted well-formed.
+
+## Per-segment loudness levelling
+
+A dub is assembled from separately synthesised lines, and even with
+each line loudness-matched to the original, the dubbed lines can
+still jump against each other — one whispered, the next shouted —
+because the original's own levels vary. `dubber level` evens them
+out on the finished track:
+
+```bash
+video-dubber level dub.wav transcript.json --out level.wav --report-out level.md
+# # Segment levelling report
+# - Target RMS: -16.0 dBFS
+# - Max deviation from target: 13.03 dB -> 0.15 dB
+# - Segments levelled: 2
+# - Segments at the gain cap: 0
+# - Silent segments (untouched): 0
+```
+
+- Each timed segment is gained toward a common target RMS (default
+  -16 dBFS), clamped to ±12 dB (`--max-gain`) and to the peak ceiling
+  (`--ceiling`, default -1 dBFS) — a segment that would need more gain
+  than the cap allows is reported as `at cap` instead of being pushed
+  into clipping, and the report's after-deviation says so honestly.
+- The gain ramps in and out over 5 ms at each segment edge so level
+  changes never click, and the track is soft-clipped at the ceiling
+  (tanh) as a final safety net. Timing never moves: a levelled dub
+  still lines up with its subtitles and its quality report.
+- Silent segments are reported, not gained; wordless segments are
+  skipped. `--json` prints the report as JSON, `--report-out` writes
+  it to a file, and `dub --level` (with `--level-target` /
+  `--level-max-gain`) levels the assembled dub in place — after
+  `--enhance` when both are given.
+- Demo: `python examples/demo_level.py` — a quiet (-29 dBFS) and a
+  loud (-9 dBFS) line levelled to -16 dBFS, then the same track with
+  the default 12 dB cap, where the quiet line honestly lands at
+  -17 dBFS and is flagged at cap.
 
 ## Speaker diarization
 
@@ -927,6 +965,17 @@ output directory; `dubber doctor` prints a Markdown/JSON report with
 an `ok` / `ok_with_warnings` / `fail` verdict and exits 1 on failure
 (the demo's bare machine honestly reports `ok_with_warnings` —
 whisper and argos missing, everything required present).
+Per-segment loudness levelling is done (624 tests): `level.py`
+measures each timed segment's RMS/peak, gains it toward -16 dBFS
+clamped to ±12 dB and the -1 dBFS peak ceiling, with 5 ms gain ramps
+at the segment edges and a tanh soft clip as a safety net; silent
+segments are reported, not gained, and timing never moves.
+`dubber level` takes `--target/--max-gain/--ceiling/--json/
+--report-out`, and `dub --level` levels the assembled dub in place
+(a test caught the after-deviation measuring the *before* levels, so
+the report now measures the levelled track; the demo's quiet line
+needs +13 dB, past the default 12 dB cap, so it honestly lands at
+-17 dBFS and is flagged at cap).
 Remaining: the self-review
 checklist and public flip — the
 project stays private per the 5–7 day pace rule (started 2026-11-08,

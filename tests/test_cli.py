@@ -2464,3 +2464,156 @@ def test_cli_doctor_fail_on_warn_exits_1(tmp_path, capsys):
     # This machine has no whisper/argos, so the report carries warnings.
     assert main(["doctor", "--fail-on-warn"]) == 1
     assert "ok_with_warnings" in capsys.readouterr().out
+
+
+def _write_level_transcript(path):
+    from video_dubber.transcript import Segment, Word
+
+    path.write_text(
+        Transcript(
+            segments=[
+                Segment(
+                    words=[
+                        Word("quiet", 0.0, 0.25),
+                        Word("line", 0.25, 0.5),
+                    ]
+                ),
+                Segment(
+                    words=[
+                        Word("loud", 1.0, 1.25),
+                        Word("line", 1.25, 1.5),
+                    ]
+                ),
+            ],
+            language="en",
+        ).to_json(),
+        encoding="utf-8",
+    )
+
+
+def test_cli_level_evens_segments(tmp_path, capsys):
+    from video_dubber.level import measure_segment_levels
+
+    src = tmp_path / "dub.wav"
+    save_wav(
+        str(src),
+        concat(
+            make_sine(440.0, 0.5, amplitude=0.05),
+            make_silence(0.5),
+            make_sine(440.0, 0.5, amplitude=0.5),
+        ),
+    )
+    transcript = tmp_path / "dub.json"
+    _write_level_transcript(transcript)
+    out = tmp_path / "level.wav"
+    report = tmp_path / "level.md"
+    assert (
+        main(
+            [
+                "level",
+                str(src),
+                str(transcript),
+                "--out",
+                str(out),
+                "--max-gain",
+                "20",
+                "--report-out",
+                str(report),
+            ]
+        )
+        == 0
+    )
+    levelled = load_wav(str(out))
+    assert levelled.duration == pytest.approx(1.5)
+    after = measure_segment_levels(levelled, Transcript.from_json(transcript.read_text()))
+    assert after[0].rms_dbfs == pytest.approx(-16.0, abs=0.5)
+    assert after[1].rms_dbfs == pytest.approx(-16.0, abs=0.5)
+    text = report.read_text(encoding="utf-8")
+    assert "Max deviation" in text and "Segments levelled: 2" in text
+    assert "wrote" in capsys.readouterr().out
+
+
+def test_cli_level_json_report(tmp_path):
+    src = tmp_path / "dub.wav"
+    save_wav(str(src), make_sine(440.0, 1.5, amplitude=0.1))
+    transcript = tmp_path / "dub.json"
+    _write_level_transcript(transcript)
+    out = tmp_path / "level.wav"
+    report = tmp_path / "level.json"
+    assert (
+        main(
+            [
+                "level",
+                str(src),
+                str(transcript),
+                "--out",
+                str(out),
+                "--json",
+                "--report-out",
+                str(report),
+            ]
+        )
+        == 0
+    )
+    data = json.loads(report.read_text(encoding="utf-8"))
+    assert data["segments_levelled"] == 2
+    assert data["target_dbfs"] == -16.0
+
+
+def test_cli_level_bad_target_is_a_clean_error(tmp_path, capsys):
+    src = tmp_path / "dub.wav"
+    save_wav(str(src), make_sine(440.0, 1.5, amplitude=0.1))
+    transcript = tmp_path / "dub.json"
+    _write_level_transcript(transcript)
+    out = tmp_path / "level.wav"
+    assert main(["level", str(src), str(transcript), "--out", str(out), "--target", "3.0"]) == 1
+    assert "must be <= 0" in capsys.readouterr().err
+
+
+def test_cli_dub_with_level_keeps_timing(tmp_path, capsys):
+    transcript = tmp_path / "hi.json"
+    _write_dub_transcript(transcript)
+    profile = tmp_path / "dub.json"
+    _write_dub_profile(profile)
+    out = tmp_path / "dub.wav"
+    assert (
+        main(
+            [
+                "dub",
+                str(transcript),
+                "--profile",
+                str(profile),
+                "--out",
+                str(out),
+                "--level",
+            ]
+        )
+        == 0
+    )
+    out_text = capsys.readouterr().out
+    assert "levelled: max deviation" in out_text
+    # Timing preserved: the dub still spans the full 2.5 s transcript.
+    assert load_wav(str(out)).duration == pytest.approx(2.5)
+
+
+def test_cli_dub_level_target_without_level_fails(tmp_path, capsys):
+    transcript = tmp_path / "hi.json"
+    _write_dub_transcript(transcript)
+    profile = tmp_path / "dub.json"
+    _write_dub_profile(profile)
+    assert (
+        main(
+            [
+                "dub",
+                str(transcript),
+                "--profile",
+                str(profile),
+                "--out",
+                str(tmp_path / "dub.wav"),
+                "--level-target",
+                "-20",
+            ]
+        )
+        == 2
+    )
+    assert "need --level" in capsys.readouterr().err
