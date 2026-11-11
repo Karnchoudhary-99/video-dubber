@@ -263,3 +263,70 @@ def _escape_ass_text(text: str) -> str:
     change what the viewer sees.
     """
     return text.replace("{", "\\{").replace("}", "\\}").replace("\n", "\\N")
+
+
+def to_ass(
+    transcript: Transcript,
+    styles: dict[str | None, AssStyle] | None = None,
+    title: str = "video-dubber",
+) -> str:
+    """Serialise ``transcript`` as Advanced SubStation Alpha (``.ass``).
+
+    The file has the three sections players expect: ``[Script Info]``
+    (title, 1280x720 play resolution), ``[V4+ Styles]`` (one style per
+    speaker, from ``styles`` or :func:`assign_speaker_styles`), and
+    ``[Events]`` (one ``Dialogue`` line per timed segment, in the
+    speaker's style, with the speaker's name in the Name field so a
+    player that shows names gets them). Wordless segments produce no
+    cue, exactly like :meth:`Transcript.to_srt`. The output is what
+    ffmpeg's ``subtitles`` filter (libass) consumes, so the same file
+    feeds ``dubber render --subtitles`` directly.
+
+    ``styles`` maps a speaker label (``None`` for unlabelled segments)
+    to a style; a segment whose speaker has no entry falls back to the
+    style for ``None`` when present, else the ``Default`` style.
+    """
+    resolved = styles if styles is not None else assign_speaker_styles(transcript)
+    default_style = resolved.get(None) or AssStyle(name="Default")
+    # Style order is stable: Default first, then speakers in first use.
+    seen: list[str] = []
+    for segment in transcript.segments:
+        style = resolved.get(segment.speaker, default_style)
+        if style.name not in seen:
+            seen.append(style.name)
+    by_name = {s.name: s for s in resolved.values()}
+    by_name.setdefault(default_style.name, default_style)
+
+    lines = [
+        "[Script Info]",
+        f"Title: {title}",
+        "ScriptType: v4.00+",
+        "PlayResX: 1280",
+        "PlayResY: 720",
+        "WrapStyle: 0",
+        "ScaledBorderAndShadow: yes",
+        "",
+        "[V4+ Styles]",
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
+        "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, "
+        "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
+        "Alignment, MarginL, MarginR, MarginV, Encoding",
+    ]
+    for name in seen:
+        lines.append(by_name[name].to_ass_line())
+    lines += [
+        "",
+        "[Events]",
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+    ]
+    for segment in transcript.segments:
+        if not segment.words:
+            continue
+        style = resolved.get(segment.speaker, default_style)
+        name = segment.speaker or ""
+        lines.append(
+            "Dialogue: 0,"
+            f"{_ass_timestamp(segment.start)},{_ass_timestamp(segment.end)},"
+            f"{style.name},{name},0,0,0,,{_escape_ass_text(segment.text)}"
+        )
+    return "\n".join(lines) + "\n"
