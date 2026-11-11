@@ -219,6 +219,9 @@ def test_render_preview_slices_output(tmp_path, monkeypatch):
     assert cmd.index("-ss") > cmd.index("-i")
     assert cmd[cmd.index("-ss") + 1] == "5.0"
     assert cmd[cmd.index("-t") + 1] == "10.0"
+    # A sliced render is bounded by -t, not -shortest: -shortest would
+    # cut the slice short when the dub audio ends before the slice does.
+    assert "-shortest" not in cmd
     assert report.is_preview is True
 
 

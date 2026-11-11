@@ -317,8 +317,14 @@ def render_video(
         "yuv420p",
         "-c:a",
         "aac",
-        "-shortest",
     ]
+    if duration is None:
+        # Cut to the shorter stream — but only when no explicit slice
+        # length is given: with -t, the slice length bounds the output,
+        # and -shortest would cut it short whenever the dubbed audio
+        # ends before the slice does (a preview of a long video over a
+        # short dub track came out 0.5s instead of the requested 1.0s).
+        cmd.append("-shortest")
     if start is not None:
         cmd += ["-ss", str(start)]
     if duration is not None:

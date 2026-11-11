@@ -72,6 +72,7 @@ from video_dubber.fidelity import FidelityError, check_fidelity
 from video_dubber.multilang import MultiTargetError, dub_all_targets, parse_targets
 from video_dubber.patch import PatchError, patch_dub, patch_transcript, refresh_report
 from video_dubber.preflight import run_preflight
+from video_dubber.render import RenderError, SubtitleStyle, render_preview, render_video
 from video_dubber.report import render_html_report
 from video_dubber.subtitles import retime_transcript
 from video_dubber.transcribe import (
@@ -312,6 +313,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_dub.add_argument("--out", required=True, help="Output dubbed WAV path.")
     p_dub.add_argument("--video", help="Original video to mux the dub into.")
     p_dub.add_argument("--mux-out", help="Output video path (needs --video).")
+    p_dub.add_argument(
+        "--burn-subtitles",
+        action="store_true",
+        help="Burn the retimed subtitles into the muxed video (needs "
+        "--video/--mux-out; writes the SRT next to the dub WAV).",
+    )
     p_dub.add_argument("--report-out", help="Write the quality report to this file.")
     p_dub.add_argument(
         "--reference",
@@ -515,6 +522,67 @@ def build_parser() -> argparse.ArgumentParser:
     p_compare.add_argument("--json", action="store_true", help="Print the comparison as JSON.")
     p_compare.add_argument(
         "--report-out", help="Write the comparison (Markdown, or JSON with --json) here."
+    )
+
+    p_render = sub.add_parser(
+        "render", help="Render a dubbed video, burning subtitles into the picture."
+    )
+    p_render.add_argument("video", help="Original video to render from.")
+    p_render.add_argument("audio", help="Dubbed audio track (WAV) to put on the video.")
+    p_render.add_argument("--subtitles", help="Retimed SRT file to burn into the picture.")
+    p_render.add_argument("--out", required=True, help="Output video path (MP4).")
+    p_render.add_argument(
+        "--font-size", type=int, default=24, help="Subtitle font size in px (default 24)."
+    )
+    p_render.add_argument("--font", help="Subtitle font family (default: libass default).")
+    p_render.add_argument(
+        "--bold", action="store_true", help="Render subtitles in bold."
+    )
+    p_render.add_argument(
+        "--alignment",
+        type=int,
+        default=2,
+        help="Subtitle position, ASS numpad (default 2 = bottom-centre).",
+    )
+    p_render.add_argument(
+        "--margin-v", type=int, default=24, help="Subtitle margin from the bottom edge in px."
+    )
+    p_render.add_argument("--crf", type=int, default=23, help="x264 quality, 0-51 (default 23).")
+    p_render.add_argument(
+        "--preset",
+        default="veryfast",
+        choices=[
+            "ultrafast",
+            "superfast",
+            "veryfast",
+            "faster",
+            "fast",
+            "medium",
+            "slow",
+            "slower",
+            "veryslow",
+            "placebo",
+        ],
+        help="x264 encoding preset (default veryfast).",
+    )
+    p_render.add_argument(
+        "--preview-start",
+        type=float,
+        default=None,
+        help="Render only a slice, starting at this many seconds in.",
+    )
+    p_render.add_argument(
+        "--preview-duration",
+        type=float,
+        default=None,
+        help="Preview slice length in seconds (default 10; needs --preview-start).",
+    )
+    p_render.add_argument("--report-out", help="Write the render report to this file.")
+    p_render.add_argument(
+        "--report-format",
+        choices=["json", "md"],
+        default="json",
+        help="Render report format (default json).",
     )
 
     p_batch = sub.add_parser("batch", help="Dub many jobs from a manifest JSON file.")
@@ -1015,6 +1083,9 @@ def _cmd_dub(args: argparse.Namespace) -> int:
     if args.video and not args.mux_out:
         print("error: --video needs --mux-out", file=sys.stderr)
         return 2
+    if args.burn_subtitles and not args.video:
+        print("error: --burn-subtitles needs --video/--mux-out", file=sys.stderr)
+        return 2
     if bed_level is not None and not args.original:
         print("error: --bed-level needs --original", file=sys.stderr)
         return 2
@@ -1096,7 +1167,8 @@ def _cmd_dub(args: argparse.Namespace) -> int:
         print(f"wrote {args.report_out}")
     if report.speakers_dubbed:
         print(f"speakers dubbed: {report.speakers_dubbed}")
-    if args.subtitles:
+    srt_path = None
+    if args.subtitles or args.burn_subtitles:
         import os
 
         stem, _ = os.path.splitext(args.out)
@@ -1108,9 +1180,17 @@ def _cmd_dub(args: argparse.Namespace) -> int:
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(text)
             print(f"wrote {path}")
+        srt_path = f"{stem}.srt"
     if args.video:
-        mux_audio(args.video, args.out, args.mux_out)
-        print(f"muxed dub into {args.mux_out}")
+        if args.burn_subtitles:
+            report = render_video(args.video, args.out, args.mux_out, subtitles_path=srt_path)
+            print(
+                f"rendered {args.mux_out} with {report.subtitle_cues} subtitle cue(s) "
+                f"burned in ({report.duration:.2f}s)"
+            )
+        else:
+            mux_audio(args.video, args.out, args.mux_out)
+            print(f"muxed dub into {args.mux_out}")
     return 0
 
 
@@ -1339,6 +1419,50 @@ def _cmd_preflight(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_render(args: argparse.Namespace) -> int:
+    style = SubtitleStyle(
+        font_size=args.font_size,
+        font=args.font,
+        bold=args.bold,
+        alignment=args.alignment,
+        margin_v=args.margin_v,
+    )
+    if args.preview_start is not None or args.preview_duration is not None:
+        report = render_preview(
+            args.video,
+            args.audio,
+            args.out,
+            subtitles_path=args.subtitles,
+            style=style,
+            start=args.preview_start if args.preview_start is not None else 0.0,
+            duration=args.preview_duration if args.preview_duration is not None else 10.0,
+            crf=args.crf,
+            preset=args.preset,
+        )
+    else:
+        report = render_video(
+            args.video,
+            args.audio,
+            args.out,
+            subtitles_path=args.subtitles,
+            style=style,
+            crf=args.crf,
+            preset=args.preset,
+        )
+    print(
+        f"rendered {report.out_path} ({report.duration:.2f}s, "
+        f"{report.filter_used} filter, CRF {report.crf})"
+    )
+    if report.subtitle_cues:
+        print(f"burned in {report.subtitle_cues} subtitle cue(s)")
+    if args.report_out:
+        text = report.to_json() if args.report_format == "json" else report.to_markdown()
+        with open(args.report_out, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        print(f"wrote {args.report_out}")
+    return 0
+
+
 def _cmd_compare(args: argparse.Namespace) -> int:
     with open(args.report_a, encoding="utf-8") as fh:
         report_a = DubReport.from_json(fh.read())
@@ -1512,6 +1636,8 @@ def main(argv=None) -> int:
             return _cmd_preflight(args)
         if args.command == "compare":
             return _cmd_compare(args)
+        if args.command == "render":
+            return _cmd_render(args)
         if args.command == "batch":
             return _cmd_batch(args)
         if args.command == "watch":
@@ -1526,6 +1652,7 @@ def main(argv=None) -> int:
         ExtractionError,
         MultiTargetError,
         PatchError,
+        RenderError,
         TranscriptionError,
         TranslationError,
         VoiceCloneError,
