@@ -72,11 +72,13 @@ def test_predict_rejects_non_positive_wpm():
 
 def test_predict_slower_rate_is_longer():
     # Long words only: short words hit the 0.12 s floor and break the ratio.
+    # The 0.05 s word gap is fixed, so only the word-time part doubles.
     text = "elephant giraffe rhinoceros hippopotamus"
     fast = predict_speech_duration(text, 200.0)
     slow = predict_speech_duration(text, 100.0)
     assert slow > fast
-    assert slow == pytest.approx(fast * 2.0)
+    gaps = len(text.split()) * 0.05
+    assert slow - gaps == pytest.approx(2 * (fast - gaps))
 
 
 def test_estimate_basics():
@@ -185,9 +187,18 @@ def test_cache_contains_is_read_only(tmp_path):
 def test_estimate_json_round_trip():
     est = estimate_dub(_sample(), backend="scripted", target="hi", price_per_minute=0.5)
     restored = DubEstimate.from_json(est.to_json())
-    # to_dict rounds floats to 3 decimals, so compare serialised forms.
-    assert restored.to_dict() == est.to_dict()
-    assert restored.rows[1].extreme is True
+    # Rows round-trip exactly once serialised (to_dict rounds to 3 decimals);
+    # aggregates are re-derived from the rounded rows, so compare with tolerance.
+    assert [row.to_dict() for row in restored.rows] == [
+        row.to_dict() for row in est.rows
+    ]
+    assert restored.backend == est.backend
+    assert restored.target == est.target
+    assert restored.mean_fit_factor == pytest.approx(est.mean_fit_factor, abs=0.001)
+    assert restored.max_fit_factor == pytest.approx(est.max_fit_factor, abs=0.001)
+    assert restored.predicted_speech_s == pytest.approx(
+        est.predicted_speech_s, abs=0.001
+    )
     assert restored.est_cost == pytest.approx(est.est_cost)
 
 
