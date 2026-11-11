@@ -254,6 +254,18 @@ class SynthesisCache:
         self._save_index()
         return audio
 
+    def contains(self, key: str) -> bool:
+        """True when ``key`` is cached and its WAV file exists on disk.
+
+        A read-only probe: it loads no audio, bumps no counters and
+        rewrites no index — estimating a dub's cache hits must not
+        disturb the cache it is measuring.
+        """
+        entry = self._entries.get(key)
+        if entry is None:
+            return False
+        return (self.directory / entry.file).exists()
+
     def put(self, key: str, audio: AudioData) -> None:
         """Store ``audio`` under ``key``, evicting LRU entries if needed."""
         filename = f"{key}.wav"
