@@ -15,6 +15,8 @@ Subcommands (see ``video-dubber <cmd> --help`` for details):
   the segment audio against a voice library.
 * ``split`` — split long transcript segments at silence gaps, so each
   piece fits its dub window without an extreme time-stretch.
+* ``merge`` — join over-split transcript segments back into readable
+  lines, across short pauses with the same speaker.
 * ``synthesize`` — render text as audio in a cloned voice (demo synthesis).
 * ``cache`` — inspect or clear the segment synthesis cache.
 * ``dub`` — render a full dubbed track from a translated transcript and
@@ -82,6 +84,7 @@ from video_dubber.export import (
 )
 from video_dubber.extract import ExtractionError, extract_audio
 from video_dubber.fidelity import FidelityError, check_fidelity
+from video_dubber.merge import MergeConfig, MergeError, merge_transcript
 from video_dubber.multilang import MultiTargetError, dub_all_targets, parse_targets
 from video_dubber.patch import PatchError, patch_dub, patch_transcript, refresh_report
 from video_dubber.preflight import run_preflight
@@ -571,6 +574,28 @@ def build_parser() -> argparse.ArgumentParser:
     p_split.add_argument("--json", action="store_true", help="Print the report as JSON.")
     p_split.add_argument(
         "--report-out", help="Write the split report (Markdown, or JSON with --json) here."
+    )
+
+    p_merge = sub.add_parser(
+        "merge", help="Join over-split transcript segments back into readable lines."
+    )
+    p_merge.add_argument("transcript", help="Transcript JSON file to merge.")
+    p_merge.add_argument("--out", required=True, help="Output merged transcript JSON path.")
+    p_merge.add_argument(
+        "--max-gap",
+        type=float,
+        default=0.4,
+        help="Join across a pause at most this long, in seconds (default 0.4).",
+    )
+    p_merge.add_argument(
+        "--max-duration",
+        type=float,
+        default=8.0,
+        help="Never produce a merged segment longer than this, in seconds (default 8.0).",
+    )
+    p_merge.add_argument("--json", action="store_true", help="Print the report as JSON.")
+    p_merge.add_argument(
+        "--report-out", help="Write the merge report (Markdown, or JSON with --json) here."
     )
 
     p_compare = sub.add_parser(
@@ -1591,6 +1616,27 @@ def _cmd_split(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_merge(args: argparse.Namespace) -> int:
+    with open(args.transcript, encoding="utf-8") as fh:
+        transcript = Transcript.from_json(fh.read())
+    try:
+        config = MergeConfig(max_gap=args.max_gap, max_duration=args.max_duration)
+    except MergeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    merged, report = merge_transcript(transcript, config)
+    with open(args.out, "w", encoding="utf-8") as fh:
+        fh.write(merged.to_json())
+    text = report.to_json() if args.json else report.to_markdown()
+    print(text, end="" if text.endswith("\n") else "\n")
+    print(f"wrote {args.out} ({report.segments_after} segments)")
+    if args.report_out:
+        with open(args.report_out, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        print(f"wrote {args.report_out}")
+    return 0
+
+
 def _cmd_preflight(args: argparse.Namespace) -> int:
     audio = load_wav(args.input)
     report = run_preflight(audio)
@@ -1896,6 +1942,8 @@ def main(argv=None) -> int:
             return _cmd_preflight(args)
         if args.command == "split":
             return _cmd_split(args)
+        if args.command == "merge":
+            return _cmd_merge(args)
         if args.command == "compare":
             return _cmd_compare(args)
         if args.command == "estimate":
@@ -1918,6 +1966,7 @@ def main(argv=None) -> int:
         EstimateError,
         ExportError,
         ExtractionError,
+        MergeError,
         MultiTargetError,
         PatchError,
         RenderError,
