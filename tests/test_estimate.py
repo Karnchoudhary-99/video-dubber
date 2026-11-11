@@ -230,3 +230,88 @@ def test_estimate_markdown_without_price_or_cache():
 def test_estimate_to_dict_is_json_serialisable():
     est = estimate_dub(_sample(), backend="scripted")
     json.dumps(est.to_dict())  # must not raise
+
+
+# --- CLI ---------------------------------------------------------------------
+
+
+def test_cli_estimate_markdown(tmp_path, capsys):
+    from video_dubber.cli import main
+
+    transcript_path = tmp_path / "translated.json"
+    transcript_path.write_text(_sample().to_json(), encoding="utf-8")
+    assert main(["estimate", str(transcript_path), "--target", "hi"]) == 0
+    out = capsys.readouterr().out
+    assert "# Dub estimate" in out
+    assert "hi" in out
+    assert "⚠" in out  # the tight second segment is flagged
+
+
+def test_cli_estimate_json_and_out_file(tmp_path, capsys):
+    from video_dubber.cli import main
+
+    transcript_path = tmp_path / "translated.json"
+    transcript_path.write_text(_sample().to_json(), encoding="utf-8")
+    out_path = tmp_path / "estimate.json"
+    assert (
+        main(
+            [
+                "estimate",
+                str(transcript_path),
+                "--format",
+                "json",
+                "--price-per-char",
+                "0.002",
+                "--out",
+                str(out_path),
+            ]
+        )
+        == 0
+    )
+    saved = DubEstimate.from_json(out_path.read_text(encoding="utf-8"))
+    assert saved.est_cost == pytest.approx(saved.total_chars * 0.002)
+    assert "wrote" in capsys.readouterr().out
+
+
+def test_cli_estimate_with_profile_and_cache(tmp_path, capsys):
+    from video_dubber.cache import CachedVoiceCloner
+    from video_dubber.cli import main
+
+    transcript = _sample()
+    transcript_path = tmp_path / "translated.json"
+    transcript_path.write_text(transcript.to_json(), encoding="utf-8")
+    profile = _profile()
+    profile_path = tmp_path / "asha.json"
+    profile_path.write_text(profile.to_json(), encoding="utf-8")
+    cache_dir = tmp_path / "synth"
+    CachedVoiceCloner(ScriptedVoiceCloner(), SynthesisCache(cache_dir)).synthesize(
+        transcript.segments[0].text, profile
+    )
+    assert (
+        main(
+            [
+                "estimate",
+                str(transcript_path),
+                "--profile",
+                str(profile_path),
+                "--cache-dir",
+                str(cache_dir),
+            ]
+        )
+        == 0
+    )
+    out = capsys.readouterr().out
+    assert "Cache: 1/2 segments already cached" in out
+
+
+def test_cli_estimate_errors_are_exit_1(tmp_path, capsys):
+    from video_dubber.cli import main
+
+    transcript_path = tmp_path / "translated.json"
+    transcript_path.write_text(_sample().to_json(), encoding="utf-8")
+    # Unknown backend without --rtf.
+    assert main(["estimate", str(transcript_path), "--backend", "mystery"]) == 1
+    assert "unknown backend" in capsys.readouterr().err
+    # Cache dir without a profile.
+    assert main(["estimate", str(transcript_path), "--cache-dir", str(tmp_path)]) == 1
+    assert "speaker profile" in capsys.readouterr().err
