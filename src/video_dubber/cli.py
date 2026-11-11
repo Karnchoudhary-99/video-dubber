@@ -13,6 +13,8 @@ Subcommands (see ``video-dubber <cmd> --help`` for details):
 * ``voices`` — list the profiles in a voice library, or add one to it.
 * ``diarize`` — label who speaks in each transcript segment, by matching
   the segment audio against a voice library.
+* ``split`` — split long transcript segments at silence gaps, so each
+  piece fits its dub window without an extreme time-stretch.
 * ``synthesize`` — render text as audio in a cloned voice (demo synthesis).
 * ``cache`` — inspect or clear the segment synthesis cache.
 * ``dub`` — render a full dubbed track from a translated transcript and
@@ -77,6 +79,7 @@ from video_dubber.patch import PatchError, patch_dub, patch_transcript, refresh_
 from video_dubber.preflight import run_preflight
 from video_dubber.render import RenderError, SubtitleStyle, render_preview, render_video
 from video_dubber.report import render_html_report
+from video_dubber.split import SplitConfig, SplitError, split_transcript
 from video_dubber.subtitles import retime_transcript
 from video_dubber.transcribe import (
     ScriptedTranscriber,
@@ -322,6 +325,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Burn the retimed subtitles into the muxed video (needs "
         "--video/--mux-out; writes the SRT next to the dub WAV).",
     )
+    p_dub.add_argument(
+        "--split-segments",
+        action="store_true",
+        help="Split segments longer than --max-segment-duration at silence "
+        "gaps before dubbing, so long lines fit their windows (needs no "
+        "extra input; --original sharpens the split points via VAD).",
+    )
+    p_dub.add_argument(
+        "--max-segment-duration",
+        type=float,
+        default=None,
+        help="Longest segment to dub as one piece, in seconds (default 8.0; "
+        "only with --split-segments).",
+    )
     p_dub.add_argument("--report-out", help="Write the quality report to this file.")
     p_dub.add_argument(
         "--reference",
@@ -513,6 +530,37 @@ def build_parser() -> argparse.ArgumentParser:
         "--fail-on-warn",
         action="store_true",
         help="Exit 1 on warnings too, not just failures.",
+    )
+
+    p_split = sub.add_parser("split", help="Split long transcript segments at silence gaps.")
+    p_split.add_argument("transcript", help="Transcript JSON file to split.")
+    p_split.add_argument("--out", required=True, help="Output split transcript JSON path.")
+    p_split.add_argument(
+        "--audio",
+        help="Source WAV: VAD silence gaps confirm split points the word "
+        "timings hide (optional; without it, word-timing pauses are used).",
+    )
+    p_split.add_argument(
+        "--max-duration",
+        type=float,
+        default=8.0,
+        help="Split any segment longer than this, in seconds (default 8.0).",
+    )
+    p_split.add_argument(
+        "--min-gap",
+        type=float,
+        default=0.4,
+        help="A pause at least this long is a clean split point (default 0.4s).",
+    )
+    p_split.add_argument(
+        "--min-segment",
+        type=float,
+        default=1.0,
+        help="Never leave a piece shorter than this when a choice exists (default 1.0s).",
+    )
+    p_split.add_argument("--json", action="store_true", help="Print the report as JSON.")
+    p_split.add_argument(
+        "--report-out", help="Write the split report (Markdown, or JSON with --json) here."
     )
 
     p_compare = sub.add_parser(
@@ -1160,11 +1208,20 @@ def _cmd_dub(args: argparse.Namespace) -> int:
         if report.verdict == "fail":
             print("pre-flight failed — dub aborted", file=sys.stderr)
             return 1
+    if args.max_segment_duration is not None and not args.split_segments:
+        print("error: --max-segment-duration needs --split-segments", file=sys.stderr)
+        return 2
     original = resample(original, DEFAULT_SAMPLE_RATE) if original is not None else None
     reference = None
     if args.reference:
         with open(args.reference, encoding="utf-8") as fh:
             reference = Transcript.from_json(fh.read())
+    if args.split_segments:
+        split_config = SplitConfig(
+            max_duration=args.max_segment_duration if args.max_segment_duration is not None else 8.0
+        )
+        transcript, split_report = split_transcript(transcript, original, split_config)
+        print(split_report.to_markdown(), end="")
     cloner = _cached_cloner(args)
     dub_audio, fit_factors, placed = dub_transcript(
         transcript,
@@ -1456,6 +1513,28 @@ def _cmd_enhance(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_split(args: argparse.Namespace) -> int:
+    with open(args.transcript, encoding="utf-8") as fh:
+        transcript = Transcript.from_json(fh.read())
+    audio = load_wav(args.audio) if args.audio else None
+    config = SplitConfig(
+        max_duration=args.max_duration,
+        min_gap=args.min_gap,
+        min_segment=args.min_segment,
+    )
+    split, report = split_transcript(transcript, audio, config)
+    with open(args.out, "w", encoding="utf-8") as fh:
+        fh.write(split.to_json())
+    text = report.to_json() if args.json else report.to_markdown()
+    print(text, end="" if text.endswith("\n") else "\n")
+    print(f"wrote {args.out} ({report.segments_after} segments)")
+    if args.report_out:
+        with open(args.report_out, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        print(f"wrote {args.report_out}")
+    return 0
+
+
 def _cmd_preflight(args: argparse.Namespace) -> int:
     audio = load_wav(args.input)
     report = run_preflight(audio)
@@ -1720,6 +1799,8 @@ def main(argv=None) -> int:
             return _cmd_enhance(args)
         if args.command == "preflight":
             return _cmd_preflight(args)
+        if args.command == "split":
+            return _cmd_split(args)
         if args.command == "compare":
             return _cmd_compare(args)
         if args.command == "estimate":
@@ -1742,6 +1823,7 @@ def main(argv=None) -> int:
         MultiTargetError,
         PatchError,
         RenderError,
+        SplitError,
         TranscriptionError,
         TranslationError,
         VoiceCloneError,

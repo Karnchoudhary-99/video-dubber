@@ -2134,3 +2134,144 @@ def test_cli_dub_burn_subtitles_without_video_fails(tmp_path, capsys):
         == 2
     )
     assert "burn-subtitles needs --video" in capsys.readouterr().err
+
+
+def _write_long_transcript(path):
+    from video_dubber.transcript import Segment, Transcript, Word
+
+    words = []
+    cursor = 0.0
+    for i in range(12):
+        words.append(Word(f"w{i}", cursor, cursor + 0.6))
+        cursor += 0.7
+        if i == 5:
+            cursor += 0.8  # a real pause after word 5
+    path.write_text(
+        Transcript(segments=[Segment(words=words, speaker="A")], language="en").to_json()
+    )
+
+
+def test_cli_split_splits_long_segment(tmp_path, capsys):
+    transcript = tmp_path / "in.json"
+    _write_long_transcript(transcript)
+    out = tmp_path / "split.json"
+    assert main(["split", str(transcript), "--out", str(out)]) == 0
+    assert "1 -> 2" in capsys.readouterr().out
+    split = Transcript.from_json(out.read_text())
+    assert len(split.segments) == 2
+    assert all(s.speaker == "A" for s in split.segments)
+    assert [w.text for s in split.segments for w in s.words] == [f"w{i}" for i in range(12)]
+
+
+def test_cli_split_json_report(tmp_path, capsys):
+    transcript = tmp_path / "in.json"
+    _write_long_transcript(transcript)
+    out = tmp_path / "split.json"
+    assert main(["split", str(transcript), "--out", str(out), "--json"]) == 0
+    captured = capsys.readouterr().out
+    data = json.loads(captured[: captured.index("wrote")].strip())
+    assert data["segments_before"] == 1
+    assert data["segments_after"] == 2
+    assert data["splits"][0]["reason"] == "silence"
+
+
+def test_cli_split_with_audio(tmp_path, capsys):
+    from video_dubber.transcript import Segment, Transcript, Word
+
+    # Words timed back-to-back, but the audio really pauses after word 5.
+    words = [Word(f"w{i}", i * 0.6, i * 0.6 + 0.6) for i in range(12)]
+    transcript = tmp_path / "in.json"
+    transcript.write_text(Transcript(segments=[Segment(words=words)], language="en").to_json())
+    audio = tmp_path / "source.wav"
+    save_wav(
+        str(audio),
+        concat(make_sine(440.0, 3.6), make_silence(1.0), make_sine(440.0, 3.6)),
+    )
+    out = tmp_path / "split.json"
+    assert (
+        main(
+            [
+                "split",
+                str(transcript),
+                "--audio",
+                str(audio),
+                "--out",
+                str(out),
+                "--max-duration",
+                "4",
+            ]
+        )
+        == 0
+    )
+    assert "silence" in capsys.readouterr().out
+    assert len(Transcript.from_json(out.read_text()).segments) == 2
+
+
+def test_cli_split_bad_config(tmp_path, capsys):
+    transcript = tmp_path / "in.json"
+    _write_long_transcript(transcript)
+    assert (
+        main(
+            [
+                "split",
+                str(transcript),
+                "--out",
+                str(tmp_path / "split.json"),
+                "--max-duration",
+                "0",
+            ]
+        )
+        == 1
+    )
+    assert "error" in capsys.readouterr().err
+
+
+def test_cli_dub_split_segments(tmp_path, capsys):
+    transcript = tmp_path / "in.json"
+    _write_long_transcript(transcript)
+    profile = tmp_path / "dub.json"
+    _write_dub_profile(profile)
+    out = tmp_path / "dub.wav"
+    assert (
+        main(
+            [
+                "dub",
+                str(transcript),
+                "--profile",
+                str(profile),
+                "--split-segments",
+                "--max-segment-duration",
+                "5",
+                "--out",
+                str(out),
+            ]
+        )
+        == 0
+    )
+    captured = capsys.readouterr().out
+    assert "Segment split" in captured
+    assert "dubbed 2 segments" in captured
+    assert out.exists()
+
+
+def test_cli_dub_max_segment_duration_needs_split_flag(tmp_path, capsys):
+    transcript = tmp_path / "in.json"
+    _write_long_transcript(transcript)
+    profile = tmp_path / "dub.json"
+    _write_dub_profile(profile)
+    assert (
+        main(
+            [
+                "dub",
+                str(transcript),
+                "--profile",
+                str(profile),
+                "--max-segment-duration",
+                "4",
+                "--out",
+                str(tmp_path / "dub.wav"),
+            ]
+        )
+        == 2
+    )
+    assert "needs --split-segments" in capsys.readouterr().err
