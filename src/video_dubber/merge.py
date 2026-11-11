@@ -114,3 +114,64 @@ def merge_transcript(
         max_duration_after=max((s.duration for s in merged), default=0.0),
     )
     return merged_transcript, report
+
+
+@dataclass
+class MergeReport:
+    """What :func:`merge_transcript` did, for the CLI and the caller."""
+
+    segments_before: int
+    segments_after: int
+    merges: list[MergeRecord] = field(default_factory=list)
+    max_duration_before: float = 0.0
+    max_duration_after: float = 0.0
+
+    @property
+    def total_merges(self) -> int:
+        return len(self.merges)
+
+    @property
+    def segments_merged(self) -> int:
+        """How many original segments disappeared into a neighbour."""
+        return sum(len(m.segment_indices) - 1 for m in self.merges)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), indent=2, sort_keys=True)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "MergeReport":
+        return cls(
+            segments_before=int(data["segments_before"]),
+            segments_after=int(data["segments_after"]),
+            merges=[MergeRecord(**m) for m in data.get("merges", [])],
+            max_duration_before=float(data.get("max_duration_before", 0.0)),
+            max_duration_after=float(data.get("max_duration_after", 0.0)),
+        )
+
+    @classmethod
+    def from_json(cls, data: str) -> "MergeReport":
+        try:
+            return cls.from_dict(json.loads(data))
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            raise MergeError(f"invalid merge report JSON: {exc}") from exc
+
+    def to_markdown(self) -> str:
+        """Human-readable report: headline numbers plus one row per join."""
+        lines = ["# Segment merge", ""]
+        lines.append(
+            f"- Segments: {self.segments_before} -> {self.segments_after} "
+            f"({self.total_merges} merge{'s' if self.total_merges != 1 else ''}, "
+            f"{self.segments_merged} segment{'s' if self.segments_merged != 1 else ''} joined)"
+        )
+        lines.append(
+            f"- Longest segment: {self.max_duration_before:.2f}s -> {self.max_duration_after:.2f}s"
+        )
+        if self.merges:
+            lines += ["", "| Segments | Reason |", "| --- | --- |"]
+            for merge in self.merges:
+                joined = "+".join(str(i + 1) for i in merge.segment_indices)
+                lines.append(f"| {joined} | {merge.reason} |")
+        return "\n".join(lines) + "\n"
