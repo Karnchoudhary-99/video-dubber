@@ -464,8 +464,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_patch.add_argument(
         "--subtitles",
         action="store_true",
-        help="Also write <out-stem>.srt and <out-stem>.vtt, retimed to the "
-        "patched audio (cues match the placed speech, not the original windows).",
+        help="Also write <out-stem>.srt, <out-stem>.vtt and <out-stem>.ass, "
+        "retimed to the patched audio (cues match the placed speech, not "
+        "the original windows).",
     )
     p_patch.add_argument(
         "--dry-run",
@@ -1515,7 +1516,11 @@ def _cmd_patch(args: argparse.Namespace) -> int:
         spans[args.segment - 1] = (timed[args.segment - 1].start, placed_duration)
         stem, _ = os.path.splitext(args.out)
         synced = retime_transcript(patched_transcript, spans)
-        for ext, text in (("srt", synced.to_srt()), ("vtt", synced.to_vtt())):
+        for ext, text in (
+            ("srt", synced.to_srt()),
+            ("vtt", synced.to_vtt()),
+            ("ass", to_ass(synced)),
+        ):
             path = f"{stem}.{ext}"
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(text)
