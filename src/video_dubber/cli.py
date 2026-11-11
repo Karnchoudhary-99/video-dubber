@@ -6,7 +6,7 @@ Subcommands (see ``video-dubber <cmd> --help`` for details):
 * ``transcribe`` — speech-to-text on a WAV (whisper CLI, or a scripted
   demo transcript with ``--backend scripted --script words.json``).
 * ``vad`` — list the speech segments an energy VAD finds in a WAV.
-* ``convert`` — re-serialise a transcript JSON file as SRT / WebVTT / JSON.
+* ``convert`` — re-serialise a transcript JSON file as SRT / WebVTT / ASS / JSON.
 * ``translate`` — translate a transcript JSON file to another language
   (dictionary backend, or ``argos-translate`` when installed).
 * ``clone`` — build a speaker profile from reference WAV recordings.
@@ -88,7 +88,7 @@ from video_dubber.preflight import run_preflight
 from video_dubber.render import RenderError, SubtitleStyle, render_preview, render_video
 from video_dubber.report import render_html_report
 from video_dubber.split import SplitConfig, SplitError, split_transcript
-from video_dubber.subtitles import retime_transcript
+from video_dubber.subtitles import retime_transcript, to_ass
 from video_dubber.transcribe import (
     ScriptedTranscriber,
     TranscriptionError,
@@ -168,7 +168,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_convert = sub.add_parser("convert", help="Convert a transcript JSON file.")
     p_convert.add_argument("transcript", help="Input transcript JSON file.")
     p_convert.add_argument(
-        "--format", choices=["srt", "vtt", "json"], default="srt", help="Output format."
+        "--format", choices=["srt", "vtt", "ass", "json"], default="srt", help="Output format."
     )
     p_convert.add_argument("--out", help="Write to this file instead of stdout.")
 
@@ -935,6 +935,7 @@ def _cmd_convert(args: argparse.Namespace) -> int:
         "json": transcript.to_json(),
         "srt": transcript.to_srt(),
         "vtt": transcript.to_vtt(),
+        "ass": to_ass(transcript),
     }[args.format]
     if args.out:
         with open(args.out, "w", encoding="utf-8") as fh:
