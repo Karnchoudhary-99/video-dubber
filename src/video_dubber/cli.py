@@ -17,6 +17,8 @@ Subcommands (see ``video-dubber <cmd> --help`` for details):
   piece fits its dub window without an extreme time-stretch.
 * ``merge`` — join over-split transcript segments back into readable
   lines, across short pauses with the same speaker.
+* ``doctor`` — check the machine itself: python, ffmpeg, whisper,
+  argos-translate, and free disk space.
 * ``synthesize`` — render text as audio in a cloned voice (demo synthesis).
 * ``cache`` — inspect or clear the segment synthesis cache.
 * ``dub`` — render a full dubbed track from a translated transcript and
@@ -67,6 +69,7 @@ from video_dubber.diarize import (
     DiarizeError,
     diarize_transcript,
 )
+from video_dubber.doctor import DoctorError, run_doctor
 from video_dubber.enhance import (
     DEFAULT_CEILING_DBFS,
     DEFAULT_GATE_THRESHOLD_DBFS,
@@ -596,6 +599,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_merge.add_argument("--json", action="store_true", help="Print the report as JSON.")
     p_merge.add_argument(
         "--report-out", help="Write the merge report (Markdown, or JSON with --json) here."
+    )
+
+    p_doctor = sub.add_parser(
+        "doctor", help="Check the machine is ready to dub (tools, versions, disk)."
+    )
+    p_doctor.add_argument(
+        "--out-dir",
+        help="Directory dubs land in; free space is measured under it (default: here).",
+    )
+    p_doctor.add_argument("--json", action="store_true", help="Print the report as JSON.")
+    p_doctor.add_argument(
+        "--report-out", help="Write the report (Markdown, or JSON with --json) here."
+    )
+    p_doctor.add_argument(
+        "--fail-on-warn",
+        action="store_true",
+        help="Exit 1 on warnings too, not just failures.",
     )
 
     p_compare = sub.add_parser(
@@ -1637,6 +1657,21 @@ def _cmd_merge(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_doctor(args: argparse.Namespace) -> int:
+    report = run_doctor(args.out_dir)
+    text = report.to_json() if args.json else report.to_markdown()
+    print(text, end="" if text.endswith("\n") else "\n")
+    if args.report_out:
+        with open(args.report_out, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        print(f"wrote {args.report_out}")
+    if report.verdict == "fail":
+        return 1
+    if args.fail_on_warn and report.verdict == "ok_with_warnings":
+        return 1
+    return 0
+
+
 def _cmd_preflight(args: argparse.Namespace) -> int:
     audio = load_wav(args.input)
     report = run_preflight(audio)
@@ -1940,6 +1975,8 @@ def main(argv=None) -> int:
             return _cmd_enhance(args)
         if args.command == "preflight":
             return _cmd_preflight(args)
+        if args.command == "doctor":
+            return _cmd_doctor(args)
         if args.command == "split":
             return _cmd_split(args)
         if args.command == "merge":
@@ -1963,6 +2000,7 @@ def main(argv=None) -> int:
         BatchError,
         CacheError,
         DiarizeError,
+        DoctorError,
         EstimateError,
         ExportError,
         ExtractionError,
