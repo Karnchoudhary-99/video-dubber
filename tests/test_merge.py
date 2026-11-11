@@ -10,9 +10,7 @@ def _seg(text: str, start: float, end: float, speaker: str | None = None) -> Seg
     words = text.split()
     span = (end - start) / max(1, len(words))
     return Segment(
-        words=[
-            Word(w, start + i * span, start + (i + 1) * span) for i, w in enumerate(words)
-        ],
+        words=[Word(w, start + i * span, start + (i + 1) * span) for i, w in enumerate(words)],
         speaker=speaker,
     )
 
