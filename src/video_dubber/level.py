@@ -223,8 +223,7 @@ def measure_segment_levels(audio: AudioData, transcript: Transcript) -> list[Seg
         end_sample = int(segment.end * audio.sample_rate)
         if start_sample >= len(audio.samples):
             raise LevelError(
-                f"segment {i} starts at {segment.start:.2f}s, past the "
-                f"{audio.duration:.2f}s audio"
+                f"segment {i} starts at {segment.start:.2f}s, past the {audio.duration:.2f}s audio"
             )
         end_sample = min(end_sample, len(audio.samples))
         rms_dbfs, peak_dbfs = _slice_stats(audio.samples, start_sample, end_sample)
