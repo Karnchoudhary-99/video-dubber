@@ -154,7 +154,10 @@ def test_estimate_cache_hits_excluded_from_cost_and_wall_time(tmp_path):
     before = cache.stats()
 
     est = estimate_dub(
-        transcript, backend="scripted", cache=cache, profile=profile,
+        transcript,
+        backend="scripted",
+        cache=cache,
+        profile=profile,
         price_per_char=0.01,
     )
     assert est.rows[0].cached is True
@@ -163,9 +166,7 @@ def test_estimate_cache_hits_excluded_from_cost_and_wall_time(tmp_path):
     assert est.chars_to_synthesize == len(transcript.segments[1].text)
     assert est.est_cost == pytest.approx(len(transcript.segments[1].text) * 0.01)
     # Only the uncached segment's speech counts towards wall time.
-    assert est.est_synth_wall_s == pytest.approx(
-        est.rows[1].predicted_s / BACKEND_RTF["scripted"]
-    )
+    assert est.est_synth_wall_s == pytest.approx(est.rows[1].predicted_s / BACKEND_RTF["scripted"])
     # Probing must not disturb the cache: no new hits/misses recorded.
     assert cache.stats().hits == before.hits
     assert cache.stats().misses == before.misses
@@ -189,16 +190,12 @@ def test_estimate_json_round_trip():
     restored = DubEstimate.from_json(est.to_json())
     # Rows round-trip exactly once serialised (to_dict rounds to 3 decimals);
     # aggregates are re-derived from the rounded rows, so compare with tolerance.
-    assert [row.to_dict() for row in restored.rows] == [
-        row.to_dict() for row in est.rows
-    ]
+    assert [row.to_dict() for row in restored.rows] == [row.to_dict() for row in est.rows]
     assert restored.backend == est.backend
     assert restored.target == est.target
     assert restored.mean_fit_factor == pytest.approx(est.mean_fit_factor, abs=0.001)
     assert restored.max_fit_factor == pytest.approx(est.max_fit_factor, abs=0.001)
-    assert restored.predicted_speech_s == pytest.approx(
-        est.predicted_speech_s, abs=0.001
-    )
+    assert restored.predicted_speech_s == pytest.approx(est.predicted_speech_s, abs=0.001)
     assert restored.est_cost == pytest.approx(est.est_cost)
 
 

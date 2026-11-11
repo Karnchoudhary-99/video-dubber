@@ -538,7 +538,8 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"TTS backend (known: {', '.join(BACKEND_RTF)}; unknown backends need --rtf).",
     )
     p_estimate.add_argument(
-        "--profile", help="Speaker profile JSON path (sets the speaking rate; needed with --cache-dir)."
+        "--profile",
+        help="Speaker profile JSON path (sets the speaking rate; needed with --cache-dir).",
     )
     p_estimate.add_argument(
         "--wpm",
@@ -570,7 +571,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Backend price per minute of synthesised speech.",
     )
-    p_estimate.add_argument("--currency", default="USD", help="Currency for the cost (default USD).")
+    p_estimate.add_argument(
+        "--currency", default="USD", help="Currency for the cost (default USD)."
+    )
     p_estimate.add_argument(
         "--format", choices=["json", "md"], default="md", help="Estimate format (default md)."
     )

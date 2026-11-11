@@ -75,9 +75,7 @@ def main() -> None:
             f"{estimate.total_chars - estimate.chars_to_synthesize} chars already rendered"
         )
         # The scripted prediction is exact: verify against a real render.
-        rendered = ScriptedVoiceCloner().synthesize(
-            transcript.segments[1].text, profile
-        )
+        rendered = ScriptedVoiceCloner().synthesize(transcript.segments[1].text, profile)
         print(
             f"predicted {estimate.rows[1].predicted_s:.2f}s for segment 2, "
             f"rendered {rendered.duration:.2f}s"

@@ -242,9 +242,7 @@ class DubEstimate:
             "chars_to_synthesize": self.chars_to_synthesize,
             "est_synth_wall_s": round(self.est_synth_wall_s, 3),
             "est_total_wall_s": round(self.est_total_wall_s, 3),
-            "est_cost": (
-                round(self.est_cost, 4) if self.est_cost is not None else None
-            ),
+            "est_cost": (round(self.est_cost, 4) if self.est_cost is not None else None),
             "currency": self.currency,
             "price_per_char": self.price_per_char,
             "price_per_minute": self.price_per_minute,
@@ -278,7 +276,10 @@ class DubEstimate:
     def to_markdown(self) -> str:
         """Human-readable estimate: headline numbers plus a per-segment table."""
         lines = ["# Dub estimate", ""]
-        lines.append(f"- Backend: `{self.backend}`" + (" (exact durations)" if self.duration_exact else " (approximate durations)"))
+        lines.append(
+            f"- Backend: `{self.backend}`"
+            + (" (exact durations)" if self.duration_exact else " (approximate durations)")
+        )
         if self.target:
             lines.append(f"- Target language: `{self.target}`")
         lines.append(f"- Speaking rate: {self.words_per_minute:.0f} wpm")
