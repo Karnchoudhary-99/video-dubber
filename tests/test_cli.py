@@ -2428,6 +2428,7 @@ def test_cli_merge_bad_config_fails(tmp_path, capsys):
     )
     assert "max_gap" in capsys.readouterr().err
 
+
 # --- doctor -------------------------------------------------------------------
 
 
