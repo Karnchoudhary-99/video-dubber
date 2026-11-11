@@ -53,7 +53,7 @@ class MergeConfig:
 
 def merge_transcript(
     transcript: Transcript, config: MergeConfig | None = None
-) -> tuple[Transcript, "MergeReport"]:
+) -> tuple[Transcript, MergeReport]:
     """Join adjacent short segments into readable lines.
 
     A left-to-right greedy pass: a segment joins the group before it
@@ -95,7 +95,11 @@ def merge_transcript(
             continue
         gap = segment.start - group[-1].end
         combined = segment.end - group[0].start
-        if segment.speaker == group[0].speaker and gap <= cfg.max_gap and combined <= cfg.max_duration:
+        if (
+            segment.speaker == group[0].speaker
+            and gap <= cfg.max_gap
+            and combined <= cfg.max_duration
+        ):
             group.append(segment)
             group_indices.append(index)
         else:
@@ -142,7 +146,7 @@ class MergeReport:
         return json.dumps(self.to_dict(), indent=2, sort_keys=True)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "MergeReport":
+    def from_dict(cls, data: dict) -> MergeReport:
         return cls(
             segments_before=int(data["segments_before"]),
             segments_after=int(data["segments_after"]),
@@ -152,7 +156,7 @@ class MergeReport:
         )
 
     @classmethod
-    def from_json(cls, data: str) -> "MergeReport":
+    def from_json(cls, data: str) -> MergeReport:
         try:
             return cls.from_dict(json.loads(data))
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
