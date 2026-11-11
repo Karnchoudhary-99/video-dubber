@@ -569,6 +569,36 @@ empty — the cache is an optimisation, so it never breaks a dub.
 `video-dubber cache [--cache-dir DIR]` prints entries, size and hit
 rate; `--clear` empties it. Demo: `python examples/demo_cache.py`.
 
+## Video render
+
+A dub is only reviewable when you can *watch* it — with the
+translated lines on screen, timed to the dubbed speech. `dubber render`
+takes the original video, the dubbed WAV and a retimed SRT (the one
+`dub --subtitles` writes) and produces a final MP4 with the subtitles
+burned into the picture via ffmpeg's `subtitles` filter (libass), so
+the file plays anywhere — no player subtitle support needed:
+
+```bash
+video-dubber render clip.mp4 dubbed.wav --subtitles dubbed.srt \
+  --out rendered.mp4
+# rendered rendered.mp4 (4.00s, subtitles filter, CRF 23)
+# burned in 2 subtitle cue(s)
+```
+
+Style is configurable (`--font-size`, `--font`, `--bold`,
+`--alignment` for the ASS numpad position, `--margin-v`), and the
+encode uses libx264 (`--crf`, `--preset`). `--preview-start` /
+`--preview-duration` render only a slice, so a long dub can be
+spot-checked in seconds — the seek is applied to the output, not to
+one input, so audio and video stay in sync in the slice. `dub
+--burn-subtitles` does the same in one step when muxing: it renders
+the muxed video with the retimed SRT burned in instead of a plain
+mux. A render report (JSON/Markdown, `--report-out`) records the
+output duration, the number of cues burned in and the filter used.
+Needs an ffmpeg build with the `subtitles` filter; rendering without
+`--subtitles` still works (video re-encoded with the new audio).
+Demo: `python examples/demo_render.py`.
+
 ## Status
 
 Audio extraction + transcription are done (62 tests). Translation is done
@@ -633,7 +663,17 @@ as WAVs with a JSON index, evicts least-recently-used entries past
 512 MiB / 1000 entries, and serves re-dubs and patches without
 re-synthesis; `dub`/`patch`/`synthesize` take `--cache-dir` and the
 `cache` subcommand reports entries, size and hit rate (the demo's
-repeat render is 1 synthesis call, 1 cache hit). Remaining: the self-review
+repeat render is 1 synthesis call, 1 cache hit). Video render is done
+(507 tests): `render.py` burns a retimed SRT into the picture with
+ffmpeg's `subtitles` filter (configurable ASS style: size, font,
+bold, alignment, margin), re-encodes with libx264/AAC, and
+`render_preview` slices a short spot-check with an output-side seek
+so A/V stay in sync; `dubber render` takes style/preset/CRF flags
+and `--report-out`, and `dub --burn-subtitles` renders the muxed
+video with subtitles burned in instead of a plain mux (a preview test
+caught `-shortest` cutting a sliced render short when the dub audio
+ended first — duration-bounded renders now let `-t` bound the
+output). Remaining: the self-review
 checklist and public flip — the
 project stays private per the 5–7 day pace rule (started 2026-11-08,
 earliest completion 2026-11-13).

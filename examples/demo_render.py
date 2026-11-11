@@ -100,18 +100,31 @@ def main() -> int:
     srt_path = out_dir / "dubbed.srt"
     srt_path.write_text(synced.to_srt(), encoding="utf-8")
 
-    rendered = render_video(str(video), str(wav_path), str(out_dir / "rendered.mp4"),
-                            subtitles_path=str(srt_path))
-    print(f"full render: {rendered.duration:.2f}s, "
-          f"{rendered.subtitle_cues} cue(s) burned in "
-          f"({rendered.filter_used} filter) -> {rendered.out_path}")
+    rendered = render_video(
+        str(video), str(wav_path), str(out_dir / "rendered.mp4"), subtitles_path=str(srt_path)
+    )
+    print(
+        f"full render: {rendered.duration:.2f}s, "
+        f"{rendered.subtitle_cues} cue(s) burned in "
+        f"({rendered.filter_used} filter) -> {rendered.out_path}"
+    )
 
-    preview = render_preview(str(video), str(wav_path), str(out_dir / "preview.mp4"),
-                             subtitles_path=str(srt_path), start=1.0, duration=2.0)
-    print(f"preview slice: {preview.duration:.2f}s from 1.0s "
-          f"({preview.subtitle_cues} cue(s)) -> {preview.out_path}")
-    print("both files play anywhere — the subtitles are in the picture, "
-          "no player subtitle support needed.")
+    preview = render_preview(
+        str(video),
+        str(wav_path),
+        str(out_dir / "preview.mp4"),
+        subtitles_path=str(srt_path),
+        start=1.0,
+        duration=2.0,
+    )
+    print(
+        f"preview slice: {preview.duration:.2f}s from 1.0s "
+        f"({preview.subtitle_cues} cue(s)) -> {preview.out_path}"
+    )
+    print(
+        "both files play anywhere — the subtitles are in the picture, "
+        "no player subtitle support needed."
+    )
     return 0
 
 

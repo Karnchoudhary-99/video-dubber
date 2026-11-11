@@ -2052,7 +2052,10 @@ def test_cli_render_preview_slice(tmp_path, capsys):
 def test_cli_render_missing_video_fails(tmp_path, capsys):
     audio = tmp_path / "dub.wav"
     _make_wav(audio)
-    assert main(["render", str(tmp_path / "nope.mp4"), str(audio), "--out", str(tmp_path / "o.mp4")]) == 1
+    assert (
+        main(["render", str(tmp_path / "nope.mp4"), str(audio), "--out", str(tmp_path / "o.mp4")])
+        == 1
+    )
     assert "error" in capsys.readouterr().err
 
 

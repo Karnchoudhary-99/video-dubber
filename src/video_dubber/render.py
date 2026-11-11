@@ -60,9 +60,7 @@ PRESETS = (
 )
 
 _COLOR_RE = re.compile(r"^&H[0-9A-Fa-f]{8}$")
-_SRT_TIMESTAMP_RE = re.compile(
-    r"^\d{2}:\d{2}:\d{2},\d{3} --> \d{2}:\d{2}:\d{2},\d{3}"
-)
+_SRT_TIMESTAMP_RE = re.compile(r"^\d{2}:\d{2}:\d{2},\d{3} --> \d{2}:\d{2}:\d{2},\d{3}")
 
 
 class RenderError(Exception):
@@ -107,9 +105,7 @@ class SubtitleStyle:
             ("back_color", self.back_color),
         ):
             if not _COLOR_RE.match(value):
-                raise RenderError(
-                    f"{name} must be ASS &HAABBGGRR, got {value!r}"
-                )
+                raise RenderError(f"{name} must be ASS &HAABBGGRR, got {value!r}")
 
     def to_force_style(self) -> str:
         """Serialise to the ``subtitles`` filter's ``force_style`` value."""
@@ -137,12 +133,7 @@ def escape_filter_path(path: str) -> str:
     themselves) must be escaped — otherwise a path with a space or a
     colon breaks the filter, or worse, silently renders the wrong file.
     """
-    return (
-        path.replace("\\", "\\\\")
-        .replace("'", "\\'")
-        .replace(":", "\\:")
-        .replace(",", "\\,")
-    )
+    return path.replace("\\", "\\\\").replace("'", "\\'").replace(":", "\\:").replace(",", "\\,")
 
 
 def subtitles_filter_available() -> bool:
@@ -198,10 +189,8 @@ class RenderReport:
             "# Video render report",
             "",
             f"- Output: {self.out_path}",
-            f"- Duration: {self.duration:.2f}s"
-            + (" (preview slice)" if self.is_preview else ""),
-            f"- Subtitle cues burned in: {self.subtitle_cues} "
-            f"(filter: {self.filter_used})",
+            f"- Duration: {self.duration:.2f}s" + (" (preview slice)" if self.is_preview else ""),
+            f"- Subtitle cues burned in: {self.subtitle_cues} (filter: {self.filter_used})",
             f"- Video codec: {self.video_codec} (CRF {self.crf})",
         ]
         return "\n".join(lines) + "\n"
@@ -335,9 +324,7 @@ def render_video(
     except ExtractionError as exc:
         raise RenderError(str(exc)) from exc
     if result.returncode != 0:
-        raise RenderError(
-            f"ffmpeg render failed for {video_path}: {result.stderr.strip()[:300]}"
-        )
+        raise RenderError(f"ffmpeg render failed for {video_path}: {result.stderr.strip()[:300]}")
     out_info = probe(out_path)
     cues = count_srt_cues(subtitles_path) if subtitles_path is not None else 0
     return RenderReport(

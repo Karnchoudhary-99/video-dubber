@@ -535,9 +535,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--font-size", type=int, default=24, help="Subtitle font size in px (default 24)."
     )
     p_render.add_argument("--font", help="Subtitle font family (default: libass default).")
-    p_render.add_argument(
-        "--bold", action="store_true", help="Render subtitles in bold."
-    )
+    p_render.add_argument("--bold", action="store_true", help="Render subtitles in bold.")
     p_render.add_argument(
         "--alignment",
         type=int,
