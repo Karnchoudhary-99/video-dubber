@@ -144,8 +144,10 @@ class LevelReport:
             "# Segment levelling report",
             "",
             f"- Target RMS: {self.target_dbfs:.1f} dBFS",
-            f"- Max deviation from target: {self.max_deviation_before_db:.2f} dB -> "
-            f"{self.max_deviation_after_db:.2f} dB",
+            (
+                f"- Max deviation from target: {self.max_deviation_before_db:.2f} dB -> "
+                f"{self.max_deviation_after_db:.2f} dB"
+            ),
             f"- Segments levelled: {self.segments_levelled}",
             f"- Segments at the gain cap: {self.segments_at_cap}",
             f"- Silent segments (untouched): {self.segments_silent}",
@@ -319,7 +321,7 @@ def level_segments(
     def _max_deviation(levels_before: list[SegmentLevel], track: AudioData) -> float:
         after = measure_segment_levels(track, transcript)
         deviations = [
-            abs(a.rms_dbfs - target_dbfs)
+            abs(b.rms_dbfs - target_dbfs)
             for a, b in zip(levels_before, after)
             if not a.silent and b.rms_dbfs != float("-inf")
         ]
