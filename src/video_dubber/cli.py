@@ -22,6 +22,8 @@ Subcommands (see ``video-dubber <cmd> --help`` for details):
 * ``report`` — re-render a saved JSON quality report as HTML or Markdown.
 * ``enhance`` — clean up a WAV: trim silence, cut hum, gate room noise,
   normalize loudness to a target RMS.
+* ``estimate`` — predict a dub before running it: speech durations, fit
+  factors, wall time, cache savings and cost, from a translated transcript.
 * ``batch`` — dub many videos/transcripts from one manifest JSON file.
 * ``watch`` — dub every new video that lands in a folder, as it appears.
 * ``config`` — show the effective configuration (dubber.toml defaults).
@@ -67,6 +69,7 @@ from video_dubber.enhance import (
     DEFAULT_TARGET_DBFS,
     enhance_audio,
 )
+from video_dubber.estimate import BACKEND_RTF, EstimateError, estimate_dub
 from video_dubber.extract import ExtractionError, extract_audio
 from video_dubber.fidelity import FidelityError, check_fidelity
 from video_dubber.multilang import MultiTargetError, dub_all_targets, parse_targets
@@ -523,6 +526,58 @@ def build_parser() -> argparse.ArgumentParser:
     p_compare.add_argument(
         "--report-out", help="Write the comparison (Markdown, or JSON with --json) here."
     )
+
+    p_estimate = sub.add_parser(
+        "estimate", help="Predict a dub's durations, wall time and cost before running it."
+    )
+    p_estimate.add_argument("transcript", help="Translated transcript JSON file to estimate.")
+    p_estimate.add_argument("--target", help="Target language code (recorded in the estimate).")
+    p_estimate.add_argument(
+        "--backend",
+        default="scripted",
+        help=f"TTS backend (known: {', '.join(BACKEND_RTF)}; unknown backends need --rtf).",
+    )
+    p_estimate.add_argument(
+        "--profile",
+        help="Speaker profile JSON path (sets the speaking rate; needed with --cache-dir).",
+    )
+    p_estimate.add_argument(
+        "--wpm",
+        type=float,
+        default=None,
+        help="Speaking rate in words per minute (default: the profile's rate, else 150).",
+    )
+    p_estimate.add_argument(
+        "--rtf",
+        type=float,
+        default=None,
+        help="Real-time factor: seconds of audio rendered per second of wall time "
+        "(overrides the backend default).",
+    )
+    p_estimate.add_argument(
+        "--cache-dir",
+        help="Synthesis cache directory: segments already cached there are "
+        "counted as hits and excluded from wall time and cost (needs --profile).",
+    )
+    p_estimate.add_argument(
+        "--price-per-char",
+        type=float,
+        default=None,
+        help="Backend price per character (mutually exclusive with --price-per-minute).",
+    )
+    p_estimate.add_argument(
+        "--price-per-minute",
+        type=float,
+        default=None,
+        help="Backend price per minute of synthesised speech.",
+    )
+    p_estimate.add_argument(
+        "--currency", default="USD", help="Currency for the cost (default USD)."
+    )
+    p_estimate.add_argument(
+        "--format", choices=["json", "md"], default="md", help="Estimate format (default md)."
+    )
+    p_estimate.add_argument("--out", help="Write the estimate to this file instead of stdout.")
 
     p_render = sub.add_parser(
         "render", help="Render a dubbed video, burning subtitles into the picture."
@@ -1476,6 +1531,39 @@ def _cmd_compare(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_estimate(args: argparse.Namespace) -> int:
+    with open(args.transcript, encoding="utf-8") as fh:
+        transcript = Transcript.from_json(fh.read())
+    profile = None
+    if args.profile:
+        with open(args.profile, encoding="utf-8") as fh:
+            profile = SpeakerProfile.from_json(fh.read())
+    wpm = args.wpm
+    if wpm is None:
+        wpm = profile.speaking_rate_wpm if profile is not None else 150.0
+    cache = SynthesisCache(args.cache_dir) if args.cache_dir else None
+    estimate = estimate_dub(
+        transcript,
+        backend=args.backend,
+        target=args.target,
+        words_per_minute=wpm,
+        real_time_factor=args.rtf,
+        price_per_char=args.price_per_char,
+        price_per_minute=args.price_per_minute,
+        currency=args.currency,
+        cache=cache,
+        profile=profile,
+    )
+    text = estimate.to_json() if args.format == "json" else estimate.to_markdown()
+    if args.out:
+        with open(args.out, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        print(f"wrote {args.out}")
+    else:
+        print(text, end="" if text.endswith("\n") else "\n")
+    return 0
+
+
 def _cmd_batch(args: argparse.Namespace) -> int:
     manifest = BatchManifest.from_json_file(args.manifest)
     results = run_batch(manifest, args.out_dir, force=args.force, stop_on_error=args.stop_on_error)
@@ -1634,6 +1722,8 @@ def main(argv=None) -> int:
             return _cmd_preflight(args)
         if args.command == "compare":
             return _cmd_compare(args)
+        if args.command == "estimate":
+            return _cmd_estimate(args)
         if args.command == "render":
             return _cmd_render(args)
         if args.command == "batch":
@@ -1647,6 +1737,7 @@ def main(argv=None) -> int:
         BatchError,
         CacheError,
         DiarizeError,
+        EstimateError,
         ExtractionError,
         MultiTargetError,
         PatchError,

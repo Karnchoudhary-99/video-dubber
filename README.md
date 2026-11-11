@@ -27,6 +27,7 @@ keeping the speaker's voice.
 - [x] Dub comparison (A/B two quality reports metric by metric, verdict + table)
 - [ ] Self-review checklist, then public
 - [x] Synthesis cache (skip re-synthesising unchanged segments, LRU eviction, `cache` CLI)
+- [x] Dub cost/time estimator (predicted durations, fit factors, wall time, cache savings, cost)
 
 ## Quick start
 
@@ -599,6 +600,41 @@ Needs an ffmpeg build with the `subtitles` filter; rendering without
 `--subtitles` still works (video re-encoded with the new audio).
 Demo: `python examples/demo_render.py`.
 
+## Dub cost/time estimator
+
+Dubbing a long video is the expensive step, and a bad fit only shows
+up afterwards as stretched audio. `dubber estimate` predicts the dub
+from the translated transcript alone — before any synthesis runs:
+
+```bash
+video-dubber estimate translated.json --target hi \
+  --profile asha.json --cache-dir ~/.cache/video-dubber/synth \
+  --price-per-char 0.002
+# # Dub estimate
+# - Backend: `scripted` (exact durations)
+# - Segments: 2 over 3.20s of source
+# - Predicted speech: 2.99s (mean fit 1.33x, max 1.61x, 1 extreme)
+# - Cache: 1/2 segments already cached — 25 of 38 chars to synthesise
+# - Estimated wall time: 0.2s (0.1s synthesis at 20x real-time + 0.1s overhead)
+# - Estimated cost: 0.0500 USD
+```
+
+Per segment it reports the window, predicted speech duration, fit
+factor (flagged when outside 0.8–1.25x, the same band the quality
+report calls extreme) and whether the segment is already cached. The
+duration model is exact for the `scripted` backend — it is the same
+per-word formula the synthesiser uses, so the demo's prediction
+matches a real render to the sample; for other backends (coqui,
+openvoice, elevenlabs) the same word-rate model is the best available
+guess and the estimate says so. Wall time uses a per-backend
+real-time factor (rough defaults, override with `--rtf` after
+measuring your own setup); unknown backends require `--rtf`. Cost is
+priced on the characters that still need synthesis — cache hits are
+excluded — via `--price-per-char` or `--price-per-minute`
+(`--currency` for the unit). `--format json` writes a machine-readable
+estimate. Probing the cache is read-only: it never loads audio or
+moves hit counters. Demo: `python examples/demo_estimate.py`.
+
 ## Status
 
 Audio extraction + transcription are done (62 tests). Translation is done
@@ -673,7 +709,16 @@ and `--report-out`, and `dub --burn-subtitles` renders the muxed
 video with subtitles burned in instead of a plain mux (a preview test
 caught `-shortest` cutting a sliced render short when the dub audio
 ended first — duration-bounded renders now let `-t` bound the
-output). Remaining: the self-review
+output). Dub cost/time estimator is done
+(528 tests): `estimate.py` predicts each segment's speech duration
+(exact for the scripted backend — the demo's prediction matches a
+real render to the sample), fit factors, synthesis wall time at the
+backend's real-time factor, cache savings via a read-only
+`SynthesisCache.contains` probe, and cost at a per-character or
+per-minute rate; `dubber estimate` takes `--profile/--wpm/--rtf/
+--cache-dir/--price-per-char/--price-per-minute/--currency/--format/
+--out`, and unknown backends require `--rtf` rather than guessing.
+Remaining: the self-review
 checklist and public flip — the
 project stays private per the 5–7 day pace rule (started 2026-11-08,
 earliest completion 2026-11-13).
