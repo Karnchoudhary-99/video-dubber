@@ -37,3 +37,4 @@ jobs:
       - run: python examples/demo_ass.py
       - run: python examples/demo_merge.py
       - run: python examples/demo_doctor.py
+      - run: python examples/demo_level.py
