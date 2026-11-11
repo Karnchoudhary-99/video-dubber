@@ -330,3 +330,39 @@ def to_ass(
             f"{style.name},{name},0,0,0,,{_escape_ass_text(segment.text)}"
         )
     return "\n".join(lines) + "\n"
+
+
+def assign_speaker_styles(
+    transcript: Transcript,
+    palette: tuple[str, ...] = SPEAKER_PALETTE,
+) -> dict[str | None, AssStyle]:
+    """Give every speaker in ``transcript`` their own ASS style.
+
+    Speakers get styles in first-appearance order, cycling through
+    ``palette`` when there are more speakers than colours (the style
+    name stays unique — ``Asha``, ``Asha_2`` — so two speakers never
+    share a colour *and* a name). Unlabelled segments map to the
+    ``Default`` style (white). Style names are sanitised: commas would
+    break the Style line, so they become underscores, and a name that
+    is empty after sanitising falls back to ``Speaker``.
+    """
+    if not palette:
+        raise SubtitleError("speaker palette must not be empty")
+    styles: dict[str | None, AssStyle] = {None: AssStyle(name="Default")}
+    used_names: set[str] = {"Default"}
+    speaker_index = 0
+    for segment in transcript.segments:
+        speaker = segment.speaker
+        if speaker is None or speaker in styles:
+            continue
+        clean = re.sub(r"[^A-Za-z0-9_]", "_", speaker).strip("_") or "Speaker"
+        name = clean
+        suffix = 2
+        while name in used_names:
+            name = f"{clean}_{suffix}"
+            suffix += 1
+        used_names.add(name)
+        color = palette[speaker_index % len(palette)]
+        speaker_index += 1
+        styles[speaker] = AssStyle(name=name, primary_color=color)
+    return styles
