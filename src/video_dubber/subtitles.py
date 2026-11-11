@@ -237,3 +237,29 @@ class AssStyle:
             "1",  # encoding (ANSI)
         ]
         return "Style: " + ",".join(fields)
+
+
+def _ass_timestamp(seconds: float) -> str:
+    """Format seconds as ASS ``H:MM:SS.cc`` (centiseconds, truncated).
+
+    ASS timestamps are centisecond-precise, so a cue ending at 1.2345s
+    renders as ``0:00:01.23`` — truncation, not rounding, so a cue never
+    claims to end after the audio does. Negative inputs clamp to zero.
+    """
+    total_cs = max(0, int(seconds * 100))
+    hours, rem = divmod(total_cs, 360_000)
+    minutes, rem = divmod(rem, 6_000)
+    secs, cs = divmod(rem, 100)
+    return f"{hours}:{minutes:02d}:{secs:02d}.{cs:02d}"
+
+
+def _escape_ass_text(text: str) -> str:
+    """Escape dialogue text for an ASS file.
+
+    ``{`` and ``}`` open override tags in ASS, so a line that says
+    ``{wow}`` would vanish from the screen — backslash-escape them.
+    Newlines become ``\\N`` (the ASS line break); a literal backslash
+    is left alone, since ASS has no escape for it and doubling it would
+    change what the viewer sees.
+    """
+    return text.replace("{", "\\{").replace("}", "\\}").replace("\n", "\\N")
