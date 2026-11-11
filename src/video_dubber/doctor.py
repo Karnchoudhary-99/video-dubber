@@ -155,3 +155,89 @@ def _check_disk_space(path: str, minimum_gib: float = 1.0) -> DoctorCheck:
         detail=f"only {free_gib:.1f} GiB free under {path} (< {minimum_gib:.1f} GiB)",
         required=False,
     )
+
+
+@dataclass
+class DoctorReport:
+    """The full diagnosis: every check, and the overall verdict."""
+
+    checks: list[DoctorCheck] = field(default_factory=list)
+
+    @property
+    def verdict(self) -> str:
+        """``fail`` when any required check failed, else ``ok_with_warnings``
+        when anything warned or failed optionally, else ``ok``."""
+        if any(c.status == "fail" and c.required for c in self.checks):
+            return "fail"
+        if any(c.status in ("warn", "fail") for c in self.checks):
+            return "ok_with_warnings"
+        return "ok"
+
+    @property
+    def passed(self) -> int:
+        return sum(1 for c in self.checks if c.status == "pass")
+
+    @property
+    def failed_required(self) -> list[DoctorCheck]:
+        return [c for c in self.checks if c.status == "fail" and c.required]
+
+    def to_dict(self) -> dict:
+        return {"verdict": self.verdict, "checks": [asdict(c) for c in self.checks]}
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), indent=2, sort_keys=True)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> DoctorReport:
+        return cls(
+            checks=[DoctorCheck(**c) for c in data.get("checks", [])],
+        )
+
+    @classmethod
+    def from_json(cls, data: str) -> DoctorReport:
+        try:
+            return cls.from_dict(json.loads(data))
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            raise DoctorError(f"invalid doctor report JSON: {exc}") from exc
+
+    def to_markdown(self) -> str:
+        """Human-readable diagnosis: verdict first, one line per check."""
+        lines = [f"# Doctor: {self.verdict}", ""]
+        for check in self.checks:
+            mark = {"pass": "✓", "warn": "~", "fail": "✗"}[check.status]
+            scope = "required" if check.required else "optional"
+            lines.append(f"- [{mark}] {check.name} ({scope}): {check.detail}")
+        if self.failed_required:
+            lines += [
+                "",
+                "Fix the failed required checks before dubbing: "
+                + ", ".join(c.name for c in self.failed_required),
+            ]
+        return "\n".join(lines) + "\n"
+
+
+def run_doctor(out_dir: str | None = None) -> DoctorReport:
+    """Run every environment check and return the report.
+
+    ``out_dir`` is where dubs land — the disk-space check measures
+    free space under it (default: the current directory). Checks never
+    raise for a missing tool: a missing binary is a failed check, not
+    a crash, so the report always prints.
+    """
+    checks = [
+        _check_python(),
+        _check_binary("ffmpeg", ["-version"], True, "install ffmpeg"),
+        _check_binary("ffprobe", ["-version"], True, "install ffmpeg (ships ffprobe)"),
+        _check_subtitles_filter(),
+        _check_binary(
+            "whisper", ["--version"], False, "pip install openai-whisper (or use --backend scripted)"
+        ),
+        _check_binary(
+            "argos-translate",
+            ["--version"],
+            False,
+            "pip install argos-translate (or use the dictionary backend)",
+        ),
+        _check_disk_space(out_dir or "."),
+    ]
+    return DoctorReport(checks=checks)
