@@ -2371,3 +2371,59 @@ def test_cli_patch_writes_ass_subtitles(tmp_path):
     assert "बदला हुआ" in ass
     assert "नमस्ते दुनिया" in ass
     assert ass.count("Dialogue:") == 2
+
+
+# --- merge --------------------------------------------------------------------
+
+
+def test_cli_merge_joins_short_gaps(tmp_path, capsys):
+    from video_dubber.transcript import Segment, Transcript, Word
+
+    transcript = tmp_path / "fragments.json"
+    transcript.write_text(
+        Transcript(
+            segments=[
+                Segment(words=[Word("hello", 0.0, 0.4)]),
+                Segment(words=[Word("world", 0.6, 1.0)]),
+                Segment(words=[Word("later", 3.0, 3.4)], speaker="Ravi"),
+                Segment(words=[Word("again", 3.6, 4.0)], speaker="Ravi"),
+            ],
+            language="en",
+        ).to_json()
+    )
+    out = tmp_path / "merged.json"
+    report_path = tmp_path / "merge.md"
+    assert (
+        main(
+            [
+                "merge",
+                str(transcript),
+                "--out",
+                str(out),
+                "--report-out",
+                str(report_path),
+            ]
+        )
+        == 0
+    )
+    merged = Transcript.from_json(out.read_text(encoding="utf-8"))
+    assert [s.text for s in merged.segments] == ["hello world", "later again"]
+    assert merged.segments[1].speaker == "Ravi"
+    assert "Segments: 4 -> 2" in capsys.readouterr().out
+    assert "# Segment merge" in report_path.read_text(encoding="utf-8")
+
+
+def test_cli_merge_bad_config_fails(tmp_path, capsys):
+    from video_dubber.transcript import Segment, Transcript, Word
+
+    transcript = tmp_path / "t.json"
+    transcript.write_text(
+        Transcript(
+            segments=[Segment(words=[Word("hi", 0.0, 0.3)])],
+        ).to_json()
+    )
+    assert (
+        main(["merge", str(transcript), "--out", str(tmp_path / "out.json"), "--max-gap", "-1"])
+        == 2
+    )
+    assert "max_gap" in capsys.readouterr().err
