@@ -2427,3 +2427,39 @@ def test_cli_merge_bad_config_fails(tmp_path, capsys):
         == 2
     )
     assert "max_gap" in capsys.readouterr().err
+
+# --- doctor -------------------------------------------------------------------
+
+
+def test_cli_doctor_reports_environment(tmp_path, capsys):
+    assert main(["doctor"]) == 0
+    out = capsys.readouterr().out
+    assert "# Doctor: " in out
+    assert "python (required)" in out
+    assert "ffmpeg (required)" in out
+    assert "ffprobe (required)" in out
+    assert "ffmpeg subtitles filter (required)" in out
+    assert "whisper (optional)" in out
+    assert "disk space (optional)" in out
+
+
+def test_cli_doctor_json_and_report_out(tmp_path):
+    out = tmp_path / "doctor.json"
+    assert main(["doctor", "--json", "--report-out", str(out)]) == 0
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert data["verdict"] in ("ok", "ok_with_warnings", "fail")
+    assert {c["name"] for c in data["checks"]} == {
+        "python",
+        "ffmpeg",
+        "ffprobe",
+        "ffmpeg subtitles filter",
+        "whisper",
+        "argos-translate",
+        "disk space",
+    }
+
+
+def test_cli_doctor_fail_on_warn_exits_1(tmp_path, capsys):
+    # This machine has no whisper/argos, so the report carries warnings.
+    assert main(["doctor", "--fail-on-warn"]) == 1
+    assert "ok_with_warnings" in capsys.readouterr().out
