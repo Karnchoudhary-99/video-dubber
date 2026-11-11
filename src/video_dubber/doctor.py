@@ -111,13 +111,16 @@ def _check_subtitles_filter() -> DoctorCheck:
             status="fail",
             detail="ffmpeg -filters did not run",
         )
-    lines = [line.strip() for line in result.stdout.splitlines()]
-    if any(line.startswith("subtitles ") or line == "subtitles" for line in lines):
-        return DoctorCheck(
-            name="ffmpeg subtitles filter",
-            status="pass",
-            detail="libass subtitles filter available (render can burn cues in)",
-        )
+    # Filter lines look like " .. subtitles   V->V  Render text subtitles ..."
+    # — the name is the second whitespace-separated token.
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[1] == "subtitles":
+            return DoctorCheck(
+                name="ffmpeg subtitles filter",
+                status="pass",
+                detail="libass subtitles filter available (render can burn cues in)",
+            )
     return DoctorCheck(
         name="ffmpeg subtitles filter",
         status="fail",
