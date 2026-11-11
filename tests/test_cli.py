@@ -2566,9 +2566,7 @@ def test_cli_level_bad_target_is_a_clean_error(tmp_path, capsys):
     transcript = tmp_path / "dub.json"
     _write_level_transcript(transcript)
     out = tmp_path / "level.wav"
-    assert (
-        main(["level", str(src), str(transcript), "--out", str(out), "--target", "3.0"]) == 1
-    )
+    assert main(["level", str(src), str(transcript), "--out", str(out), "--target", "3.0"]) == 1
     assert "must be <= 0" in capsys.readouterr().err
 
 

@@ -42,7 +42,7 @@ import os
 import sys
 from pathlib import Path
 
-from video_dubber import __version__
+from video_dubber import __version__, level
 from video_dubber.assemble import (
     AssemblyError,
     DubReport,
@@ -80,13 +80,6 @@ from video_dubber.enhance import (
     enhance_audio,
 )
 from video_dubber.estimate import BACKEND_RTF, EstimateError, estimate_dub
-from video_dubber.level import (
-    DEFAULT_CEILING_DBFS as LEVEL_CEILING_DBFS,
-    DEFAULT_MAX_GAIN_DB,
-    DEFAULT_TARGET_DBFS as LEVEL_TARGET_DBFS,
-    LevelError,
-    level_segments,
-)
 from video_dubber.export import (
     ExportError,
     build_manifest,
@@ -391,8 +384,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--level-max-gain",
         type=float,
         default=None,
-        help="Most gain applied to any one segment, in dB "
-        "(default 12.0; only with --level).",
+        help="Most gain applied to any one segment, in dB (default 12.0; only with --level).",
     )
     p_dub.add_argument(
         "--report-format",
@@ -562,32 +554,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_enhance.add_argument("--report-out", help="Write the enhancement report (Markdown) here.")
 
-    p_level = sub.add_parser(
-        "level", help="Even out per-segment loudness in a dubbed WAV."
-    )
+    p_level = sub.add_parser("level", help="Even out per-segment loudness in a dubbed WAV.")
     p_level.add_argument("input", help="Input WAV file (a dubbed track).")
-    p_level.add_argument(
-        "transcript", help="Transcript JSON file with the segment timings."
-    )
+    p_level.add_argument("transcript", help="Transcript JSON file with the segment timings.")
     p_level.add_argument("--out", required=True, help="Output WAV path.")
     p_level.add_argument(
         "--target",
         type=float,
         default=None,
-        help=f"Target RMS in dBFS (default {LEVEL_TARGET_DBFS}).",
+        help=f"Target RMS in dBFS (default {level.DEFAULT_TARGET_DBFS}).",
     )
     p_level.add_argument(
         "--max-gain",
         type=float,
         default=None,
-        help=f"Most gain applied to any one segment, in dB "
-        f"(default {DEFAULT_MAX_GAIN_DB}).",
+        help=f"Most gain applied to any one segment, in dB (default {level.DEFAULT_MAX_GAIN_DB}).",
     )
     p_level.add_argument(
         "--ceiling",
         type=float,
         default=None,
-        help=f"Peak ceiling in dBFS (default {LEVEL_CEILING_DBFS}).",
+        help=f"Peak ceiling in dBFS (default {level.DEFAULT_CEILING_DBFS}).",
     )
     p_level.add_argument("--json", action="store_true", help="Print the report as JSON.")
     p_level.add_argument(
@@ -1398,14 +1385,16 @@ def _cmd_dub(args: argparse.Namespace) -> int:
         # Level after enhancing: the whole-track normalize runs first,
         # then each segment is evened against the others. Timing never
         # moves, so the placed spans and the report stay valid.
-        dub_audio, level_report = level_segments(
+        dub_audio, level_report = level.level_segments(
             dub_audio,
             transcript,
             target_dbfs=(
-                args.level_target if args.level_target is not None else LEVEL_TARGET_DBFS
+                args.level_target if args.level_target is not None else level.DEFAULT_TARGET_DBFS
             ),
             max_gain_db=(
-                args.level_max_gain if args.level_max_gain is not None else DEFAULT_MAX_GAIN_DB
+                args.level_max_gain
+                if args.level_max_gain is not None
+                else level.DEFAULT_MAX_GAIN_DB
             ),
         )
     save_wav(args.out, dub_audio)
@@ -1704,12 +1693,12 @@ def _cmd_level(args: argparse.Namespace) -> int:
     with open(args.transcript, encoding="utf-8") as fh:
         transcript = Transcript.from_json(fh.read())
     audio = load_wav(args.input)
-    levelled, report = level_segments(
+    levelled, report = level.level_segments(
         audio,
         transcript,
-        target_dbfs=args.target if args.target is not None else LEVEL_TARGET_DBFS,
-        max_gain_db=args.max_gain if args.max_gain is not None else DEFAULT_MAX_GAIN_DB,
-        ceiling_dbfs=args.ceiling if args.ceiling is not None else LEVEL_CEILING_DBFS,
+        target_dbfs=args.target if args.target is not None else level.DEFAULT_TARGET_DBFS,
+        max_gain_db=args.max_gain if args.max_gain is not None else level.DEFAULT_MAX_GAIN_DB,
+        ceiling_dbfs=args.ceiling if args.ceiling is not None else level.DEFAULT_CEILING_DBFS,
     )
     save_wav(args.out, levelled)
     text = report.to_json() if args.json else report.to_markdown()
@@ -2114,7 +2103,7 @@ def main(argv=None) -> int:
         EstimateError,
         ExportError,
         ExtractionError,
-        LevelError,
+        level.LevelError,
         MergeError,
         MultiTargetError,
         PatchError,
