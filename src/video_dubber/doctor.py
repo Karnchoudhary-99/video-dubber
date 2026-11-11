@@ -49,9 +49,7 @@ def _which(command: str) -> str | None:
 def _first_line(command: list[str]) -> str | None:
     """First stdout line of ``command``, or None when it cannot run."""
     try:
-        result = subprocess.run(
-            command, capture_output=True, text=True, timeout=15, check=False
-        )
+        result = subprocess.run(command, capture_output=True, text=True, timeout=15, check=False)
     except (OSError, subprocess.TimeoutExpired):
         return None
     if result.returncode != 0:
@@ -230,7 +228,10 @@ def run_doctor(out_dir: str | None = None) -> DoctorReport:
         _check_binary("ffprobe", ["-version"], True, "install ffmpeg (ships ffprobe)"),
         _check_subtitles_filter(),
         _check_binary(
-            "whisper", ["--version"], False, "pip install openai-whisper (or use --backend scripted)"
+            "whisper",
+            ["--version"],
+            False,
+            "pip install openai-whisper (or use --backend scripted)",
         ),
         _check_binary(
             "argos-translate",

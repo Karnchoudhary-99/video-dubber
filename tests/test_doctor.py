@@ -135,9 +135,7 @@ def test_disk_space_unmeasurable_warns(monkeypatch):
 
 
 def test_report_verdict_rules():
-    ok = DoctorReport(
-        checks=[DoctorCheck(name="a", status="pass", detail="fine")]
-    )
+    ok = DoctorReport(checks=[DoctorCheck(name="a", status="pass", detail="fine")])
     assert ok.verdict == "ok"
     warnings = DoctorReport(
         checks=[
@@ -151,9 +149,7 @@ def test_report_verdict_rules():
         checks=[DoctorCheck(name="b", status="fail", detail="missing", required=False)]
     )
     assert optional_fail.verdict == "ok_with_warnings"
-    required_fail = DoctorReport(
-        checks=[DoctorCheck(name="a", status="fail", detail="missing")]
-    )
+    required_fail = DoctorReport(checks=[DoctorCheck(name="a", status="fail", detail="missing")])
     assert required_fail.verdict == "fail"
     assert required_fail.failed_required[0].name == "a"
 
@@ -191,7 +187,9 @@ def test_run_doctor_all_missing_fails(monkeypatch):
         "ffmpeg subtitles filter",
     }
     # Optional tools warn, they never fail the run.
-    assert all(c.status == "warn" for c in report.checks if c.name in ("whisper", "argos-translate"))
+    assert all(
+        c.status == "warn" for c in report.checks if c.name in ("whisper", "argos-translate")
+    )
     assert "Fix the failed required checks" in report.to_markdown()
 
 

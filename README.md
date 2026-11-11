@@ -32,6 +32,7 @@ keeping the speaker's voice.
 - [x] Export bundle (portable dir/zip: dubbed audio, subtitles, report, manifest with SHA-256, verify)
 - [x] ASS subtitle export (styled .ass: one named colour per speaker, centisecond timings)
 - [x] Segment merging (join over-split fragments across short same-speaker gaps)
+- [x] Environment diagnostics (`dubber doctor`: tools, versions, disk space)
 
 ## Quick start
 
@@ -302,6 +303,40 @@ video-dubber merge fragments.json --out merged.json --report-out merge.md
   merged instead of trusting an average.
 - Demo: `python examples/demo_merge.py` — five fragments become two
   lines, and the speaker change at the end stays separate.
+
+## Environment diagnostics
+
+The pipeline shells out to ffmpeg, ffprobe, whisper and
+argos-translate, and a missing binary fails a run halfway through —
+after the transcription, or after the dub — with an error that names
+the tool but not the fix. `dubber doctor` checks everything up front:
+
+```bash
+video-dubber doctor
+# # Doctor: ok_with_warnings
+# - [✓] python (required): Python 3.12.3 (>= 3.11)
+# - [✓] ffmpeg (required): ffmpeg version 8.1.2 ...
+# - [✓] ffprobe (required): ffprobe version 8.1.2 ...
+# - [✓] ffmpeg subtitles filter (required): libass subtitles filter available
+# - [~] whisper (optional): not found on PATH (pip install openai-whisper ...)
+# - [~] argos-translate (optional): not found on PATH (...)
+# - [✓] disk space (optional): 125.8 GiB free under . (>= 1.0 GiB)
+```
+
+- Each check is **required** or **optional**: a missing ffmpeg fails
+  the run (nothing works without it); a missing whisper only warns
+  (the scripted backend still demos the whole pipeline). The verdict
+  is `ok`, `ok_with_warnings`, or `fail` — and the command exits 1 on
+  `fail` (`--fail-on-warn` exits 1 on warnings too, for CI gates).
+- The subtitles-filter check reads `ffmpeg -filters` and confirms the
+  libass filter `render` needs is actually in the build, so a
+  minimal ffmpeg that cannot burn cues in is caught here, not at
+  render time.
+- `--json` prints a machine-readable report, `--report-out` writes it
+  to a file, and `--out-dir` measures free space where dubs land
+  (a full disk fails a render mid-write).
+- Demo: `python examples/demo_doctor.py` — the full diagnosis on this
+  machine, with the report asserted well-formed.
 
 ## Speaker diarization
 
@@ -883,6 +918,15 @@ break a group, and the report lists every join by original segment
 number; `dubber merge` takes `--max-gap`/`--max-duration` and a
 JSON/Markdown report (the demo's five fragments become two lines,
 and the speaker change stays separate).
+Environment diagnostics are done (606 tests): `doctor.py` checks
+python >= 3.11, ffmpeg/ffprobe presence + version, the libass
+`subtitles` filter (parsed from `ffmpeg -filters`, so a minimal
+ffmpeg build is caught here, not at render time), whisper and
+argos-translate as optional backends, and free disk space under the
+output directory; `dubber doctor` prints a Markdown/JSON report with
+an `ok` / `ok_with_warnings` / `fail` verdict and exits 1 on failure
+(the demo's bare machine honestly reports `ok_with_warnings` —
+whisper and argos missing, everything required present).
 Remaining: the self-review
 checklist and public flip — the
 project stays private per the 5–7 day pace rule (started 2026-11-08,
