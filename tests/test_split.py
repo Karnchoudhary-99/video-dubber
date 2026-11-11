@@ -31,8 +31,9 @@ def _long_segment(n_words=12, step=0.7, gap_at=None, gap=0.8, speaker="A"):
     words = _words([f"w{i}" for i in range(n_words)], step=step)
     if gap_at is not None:
         words = [
-            Word(w.text, w.start + (gap if i > gap_at else 0.0),
-                 w.end + (gap if i > gap_at else 0.0))
+            Word(
+                w.text, w.start + (gap if i > gap_at else 0.0), w.end + (gap if i > gap_at else 0.0)
+            )
             for i, w in enumerate(words)
         ]
     return Segment(words=words, speaker=speaker)
@@ -69,9 +70,7 @@ def test_splits_at_silence_gap():
     assert report.splits[0].reason == "silence"
     assert report.splits[0].segment_index == 0
     # Words and timings survive the cut, in order, speaker kept.
-    assert [w.text for s in out.segments for w in s.words] == [
-        f"w{i}" for i in range(12)
-    ]
+    assert [w.text for s in out.segments for w in s.words] == [f"w{i}" for i in range(12)]
     assert all(s.speaker == "A" for s in out.segments)
     assert all(s.duration <= 8.0 for s in out.segments)
     assert report.max_duration_after <= 8.0
@@ -94,16 +93,12 @@ def test_continuous_speech_forces_a_cut():
     # word_len == step, so gap is 0.0.
     words = _words([f"w{i}" for i in range(12)], step=0.6, word_len=0.6)
     transcript = Transcript(segments=[Segment(words=words)], language="en")
-    out, report = split_transcript(
-        transcript, config=SplitConfig(max_duration=4.0, min_gap=0.4)
-    )
+    out, report = split_transcript(transcript, config=SplitConfig(max_duration=4.0, min_gap=0.4))
     assert len(out.segments) == 2
     assert report.total_splits == 1
     assert report.splits[0].reason == "forced"
     assert report.forced_splits == 1
-    assert [w.text for s in out.segments for w in s.words] == [
-        f"w{i}" for i in range(12)
-    ]
+    assert [w.text for s in out.segments for w in s.words] == [f"w{i}" for i in range(12)]
 
 
 def test_falls_back_to_longest_gap():
@@ -115,15 +110,11 @@ def test_falls_back_to_longest_gap():
         shift = 0.15 if i > 6 else 0.0
         shifted.append(Word(w.text, w.start + shift, w.end + shift))
     transcript = Transcript(segments=[Segment(words=shifted)], language="en")
-    out, report = split_transcript(
-        transcript, config=SplitConfig(max_duration=6.0, min_gap=0.4)
-    )
+    out, report = split_transcript(transcript, config=SplitConfig(max_duration=6.0, min_gap=0.4))
     assert report.total_splits == 1
     assert report.splits[0].reason == "longest-gap"
     assert report.splits[0].at == pytest.approx(shifted[6].end)
-    assert [w.text for s in out.segments for w in s.words] == [
-        f"w{i}" for i in range(12)
-    ]
+    assert [w.text for s in out.segments for w in s.words] == [f"w{i}" for i in range(12)]
 
 
 def test_min_segment_skips_too_early_pause():
@@ -160,9 +151,7 @@ def test_audio_confirms_boundary_hidden_by_coarse_timings():
     )
     _, no_audio = split_transcript(transcript, config=SplitConfig(max_duration=4.0))
     assert no_audio.splits[0].reason == "forced"
-    out, report = split_transcript(
-        transcript, audio=audio, config=SplitConfig(max_duration=4.0)
-    )
+    _out, report = split_transcript(transcript, audio=audio, config=SplitConfig(max_duration=4.0))
     assert report.total_splits == 1
     assert report.splits[0].reason == "silence"
     assert report.splits[0].at == pytest.approx(words[5].end)

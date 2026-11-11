@@ -61,8 +61,7 @@ class SplitConfig:
             raise SplitError(f"min_segment must not be negative, got {self.min_segment}")
         if self.min_segment >= self.max_duration:
             raise SplitError(
-                f"min_segment ({self.min_segment}) must be below "
-                f"max_duration ({self.max_duration})"
+                f"min_segment ({self.min_segment}) must be below max_duration ({self.max_duration})"
             )
 
 
@@ -115,8 +114,7 @@ class SplitReport:
             f"({self.total_splits} split{'s' if self.total_splits != 1 else ''})"
         )
         lines.append(
-            f"- Longest segment: {self.max_duration_before:.2f}s -> "
-            f"{self.max_duration_after:.2f}s"
+            f"- Longest segment: {self.max_duration_before:.2f}s -> {self.max_duration_after:.2f}s"
         )
         if self.forced_splits:
             lines.append(
@@ -129,10 +127,7 @@ class SplitReport:
             lines.append("| Segment | Cut at | Reason |")
             lines.append("| --- | --- | --- |")
             for split in self.splits:
-                lines.append(
-                    f"| {split.segment_index + 1} | {split.at:.2f}s | "
-                    f"{split.reason} |"
-                )
+                lines.append(f"| {split.segment_index + 1} | {split.at:.2f}s | {split.reason} |")
         return "\n".join(lines) + "\n"
 
 
@@ -173,10 +168,7 @@ def _candidate_boundaries(
         if silence is not None:
             point = words[i].end
             for start, end in silence:
-                if (
-                    end - start >= config.min_gap
-                    and start - 0.15 <= point <= end
-                ):
+                if end - start >= config.min_gap and start - 0.15 <= point <= end:
                     candidates[i] = "silence"
                     break
     return candidates
@@ -275,9 +267,7 @@ def split_transcript(
             max_after = max(max_after, segment.duration)
             continue
         candidates = _candidate_boundaries(segment.words, silence, config)
-        pieces, piece_splits = _split_words(
-            segment.words, candidates, index, config
-        )
+        pieces, piece_splits = _split_words(segment.words, candidates, index, config)
         splits.extend(piece_splits)
         for piece in pieces:
             segments.append(Segment(words=piece, speaker=segment.speaker))
