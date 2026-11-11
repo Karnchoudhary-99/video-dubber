@@ -29,6 +29,7 @@ keeping the speaker's voice.
 - [x] Synthesis cache (skip re-synthesising unchanged segments, LRU eviction, `cache` CLI)
 - [x] Dub cost/time estimator (predicted durations, fit factors, wall time, cache savings, cost)
 - [x] Segment splitting (cut long lines at silence gaps so each piece fits its window)
+- [x] Export bundle (portable dir/zip: dubbed audio, subtitles, report, manifest with SHA-256, verify)
 
 ## Quick start
 
@@ -672,6 +673,34 @@ transcript before synthesis, so each piece fits its window; the split
 report prints first and the quality report reflects the split
 segments. Demo: `python examples/demo_split.py`.
 
+## Export bundle
+
+A dub is only useful once it leaves this machine. `dubber export`
+packs a finished dub into a portable bundle — a directory, or a single
+`.zip` — with a `manifest.json` recording the provenance (source and
+target languages, speakers, quality verdict, MOS proxy) and a SHA-256
+inventory of every file inside, plus a human-readable `README.md`:
+
+```bash
+dubber export dubbed.wav --target hi --subtitles dubbed.srt \
+  --report report.json --original clip.mp4 --out mars-cricket.hi.zip
+# # Export bundle: dubbed.hi
+# - Languages: en -> hi
+# - Verdict: **review**
+# ...
+# wrote mars-cricket.hi.zip
+
+dubber export --verify mars-cricket.hi
+# bundle intact: mars-cricket.hi
+```
+
+Two files from different roles can share a basename (the dub and the
+original are both often `clip.wav`), so colliding names are prefixed
+with their role (`original_clip.wav`) instead of silently overwriting
+each other. Verification re-hashes every file and reports anything
+missing, changed, or extra — a tampered bundle fails loudly instead of
+passing quietly. Demo: `python examples/demo_export.py`.
+
 ## Status
 
 Audio extraction + transcription are done (62 tests). Translation is done
@@ -763,7 +792,14 @@ search excluding the piece's last word; a VAD edge-tolerance of
 150 ms covers frame quantisation plus hangover); `dubber split`
 writes the split transcript plus a Markdown/JSON report, and
 `dub --split-segments` splits before synthesis so each piece fits
-its window.
+its window. Export bundle is done (563 tests): `export.py` builds a
+manifest (provenance + SHA-256 file inventory, JSON/Markdown,
+round-trippable), `export_bundle` writes a directory bundle and
+`export_zip` a single `.zip`, and `verify_bundle` re-hashes a bundle
+and reports missing, changed, or unlisted files; `dubber export`
+takes the dubbed audio plus optional subtitles, report, original and
+rendered video, and `dubber export --verify` checks a bundle
+(the demo's tampered copy fails verification on both hash and size).
 Remaining: the self-review
 checklist and public flip — the
 project stays private per the 5–7 day pace rule (started 2026-11-08,
