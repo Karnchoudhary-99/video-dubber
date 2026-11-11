@@ -302,8 +302,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_dub.add_argument(
         "--subtitles",
         action="store_true",
-        help="Also write <out-stem>.srt and <out-stem>.vtt, retimed to the "
-        "dubbed audio (cues match the placed speech, not the original windows).",
+        help="Also write <out-stem>.srt, <out-stem>.vtt and <out-stem>.ass, "
+        "retimed to the dubbed audio (cues match the placed speech, not "
+        "the original windows).",
     )
     p_dub.add_argument("--original", help="Original audio WAV (for loudness matching).")
     p_dub.add_argument(
@@ -1331,7 +1332,11 @@ def _cmd_dub(args: argparse.Namespace) -> int:
         # Cues follow the dubbed audio: a clamped stretch ends the speech
         # early, so original-window timings would linger over silence.
         synced = retime_transcript(transcript, placed)
-        for ext, text in (("srt", synced.to_srt()), ("vtt", synced.to_vtt())):
+        for ext, text in (
+            ("srt", synced.to_srt()),
+            ("vtt", synced.to_vtt()),
+            ("ass", to_ass(synced)),
+        ):
             path = f"{stem}.{ext}"
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(text)
