@@ -30,3 +30,4 @@ jobs:
       - run: python examples/demo_preflight.py
       - run: python examples/demo_compare.py
       - run: python examples/demo_cache.py
+      - run: python examples/demo_render.py

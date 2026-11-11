@@ -1982,3 +1982,155 @@ def test_cli_compare_report_out(tmp_path, capsys):
     text = report.read_text(encoding="utf-8")
     assert "Verdict: **A**" in text
     assert "| MOS proxy | 4.5 | 3.2 | A |" in text
+
+
+@ffmpeg_missing
+def test_cli_render_burns_subtitles(tmp_path, capsys):
+    video = tmp_path / "clip.mp4"
+    _make_test_video(str(video), duration=2.0)
+    audio = tmp_path / "dub.wav"
+    _make_wav(audio)
+    srt = tmp_path / "subs.srt"
+    srt.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nHello world\n\n"
+        "2\n00:00:01,000 --> 00:00:02,000\nWelcome to Mars\n",
+        encoding="utf-8",
+    )
+    out = tmp_path / "rendered.mp4"
+    report = tmp_path / "render.json"
+    assert (
+        main(
+            [
+                "render",
+                str(video),
+                str(audio),
+                "--subtitles",
+                str(srt),
+                "--out",
+                str(out),
+                "--report-out",
+                str(report),
+            ]
+        )
+        == 0
+    )
+    assert out.exists() and out.stat().st_size > 0
+    assert "burned in 2 subtitle cue(s)" in capsys.readouterr().out
+    data = json.loads(report.read_text(encoding="utf-8"))
+    assert data["subtitle_cues"] == 2
+    assert data["filter_used"] == "subtitles"
+
+
+@ffmpeg_missing
+def test_cli_render_preview_slice(tmp_path, capsys):
+    video = tmp_path / "clip.mp4"
+    _make_test_video(str(video), duration=4.0)
+    audio = tmp_path / "dub.wav"
+    _make_wav(audio)
+    out = tmp_path / "preview.mp4"
+    assert (
+        main(
+            [
+                "render",
+                str(video),
+                str(audio),
+                "--out",
+                str(out),
+                "--preview-start",
+                "1",
+                "--preview-duration",
+                "1",
+            ]
+        )
+        == 0
+    )
+    from video_dubber.extract import probe
+
+    assert probe(str(out)).duration == pytest.approx(1.0, abs=0.15)
+
+
+def test_cli_render_missing_video_fails(tmp_path, capsys):
+    audio = tmp_path / "dub.wav"
+    _make_wav(audio)
+    assert (
+        main(["render", str(tmp_path / "nope.mp4"), str(audio), "--out", str(tmp_path / "o.mp4")])
+        == 1
+    )
+    assert "error" in capsys.readouterr().err
+
+
+def test_cli_render_bad_style_fails(tmp_path, capsys):
+    video = tmp_path / "clip.mp4"
+    _make_test_video(str(video), duration=1.0)
+    audio = tmp_path / "dub.wav"
+    _make_wav(audio)
+    assert (
+        main(
+            [
+                "render",
+                str(video),
+                str(audio),
+                "--out",
+                str(tmp_path / "o.mp4"),
+                "--font-size",
+                "200",
+            ]
+        )
+        == 1
+    )
+    assert "error" in capsys.readouterr().err
+
+
+@ffmpeg_missing
+def test_cli_dub_burn_subtitles(tmp_path, capsys):
+    transcript = tmp_path / "hi.json"
+    _write_dub_transcript(transcript)
+    profile = tmp_path / "dub.json"
+    _write_dub_profile(profile)
+    video = tmp_path / "clip.mp4"
+    _make_test_video(str(video), duration=2.5)
+    out = tmp_path / "dub.wav"
+    muxed = tmp_path / "dubbed.mp4"
+    assert (
+        main(
+            [
+                "dub",
+                str(transcript),
+                "--profile",
+                str(profile),
+                "--out",
+                str(out),
+                "--video",
+                str(video),
+                "--mux-out",
+                str(muxed),
+                "--burn-subtitles",
+            ]
+        )
+        == 0
+    )
+    assert muxed.exists() and muxed.stat().st_size > 0
+    assert (tmp_path / "dub.srt").exists()
+    assert "subtitle cue(s) burned in" in capsys.readouterr().out
+
+
+def test_cli_dub_burn_subtitles_without_video_fails(tmp_path, capsys):
+    transcript = tmp_path / "hi.json"
+    _write_dub_transcript(transcript)
+    profile = tmp_path / "dub.json"
+    _write_dub_profile(profile)
+    assert (
+        main(
+            [
+                "dub",
+                str(transcript),
+                "--profile",
+                str(profile),
+                "--out",
+                str(tmp_path / "dub.wav"),
+                "--burn-subtitles",
+            ]
+        )
+        == 2
+    )
+    assert "burn-subtitles needs --video" in capsys.readouterr().err
