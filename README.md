@@ -30,6 +30,7 @@ keeping the speaker's voice.
 - [x] Dub cost/time estimator (predicted durations, fit factors, wall time, cache savings, cost)
 - [x] Segment splitting (cut long lines at silence gaps so each piece fits its window)
 - [x] Export bundle (portable dir/zip: dubbed audio, subtitles, report, manifest with SHA-256, verify)
+- [x] ASS subtitle export (styled .ass: one named colour per speaker, centisecond timings)
 
 ## Quick start
 
@@ -221,7 +222,7 @@ video-dubber dub translated.json --profile narrator.json \
   unlabelled segments — or speakers with no profile — fall back to the
   default `--profile` voice instead of failing the dub.
 - The quality report counts `speakers_dubbed` (distinct speaker labels).
-- `--subtitles` writes `dubbed.srt` + `dubbed.vtt` next to the dub WAV;
+- `--subtitles` writes `dubbed.srt` + `dubbed.vtt` + `dubbed.ass` next to the dub WAV;
   batch jobs always write `translated.srt` / `translated.vtt` too, and
   a batch job can carry a `"profiles": {"Asha": "asha.json"}` key with
   the same meaning. The cues are **retimed to the dubbed audio**: a
@@ -236,6 +237,39 @@ video-dubber dub translated.json --profile narrator.json \
   with `video-dubber batch examples/multispeaker/manifest.json --out-dir out/`.
   The retiming demo is `python examples/demo_subtitles.py` — one short
   word in a 4s window gets a 0.85s cue instead of a 4s one.
+
+## ASS subtitle export
+
+SRT/VTT carry one cue per segment and no styling at all, so a
+two-speaker dub reads as one voice on screen. The `.ass` file
+`dub --subtitles` (and `patch --subtitles`) writes next to the SRT/VTT
+gives every speaker their own named style and colour — Asha white,
+Ravi yellow, and so on through an 8-colour palette that cycles when a
+project has more speakers than colours:
+
+```bash
+# Styled ASS from any transcript (colours assigned per speaker label)
+video-dubber convert transcript.json --format ass --out subs.ass
+```
+
+- **Format**: a real Advanced SubStation Alpha file — `[Script Info]`
+  (1280x720 play resolution), `[V4+ Styles]` (one `Style:` line per
+  speaker: font, size, `#RRGGBB` colours converted to ASS
+  `&H00BBGGRR`, bold/italic, numpad alignment, margins) and `[Events]`
+  (one `Dialogue:` line per timed segment, in the speaker's style,
+  with the speaker's name in the Name field). Centisecond timings are
+  truncated, never rounded up, so a cue never claims to end after the
+  audio does; `{`/`}` in the text are escaped so a line that says
+  `{wow}` still shows on screen.
+- **API**: `video_dubber.subtitles.to_ass(transcript)` (explicit styles
+  via `styles={speaker: AssStyle(...)}`, falling back to `Default` for
+  unlisted speakers) and `assign_speaker_styles(transcript)` for the
+  palette assignment — style names are sanitised (commas become
+  underscores, collisions get a `_2` suffix) so two speakers never
+  share a style name. The same file feeds `dubber render --subtitles`
+  directly, so the colours on screen match the colours in the file.
+- Demo: `python examples/demo_ass.py` — two speakers, two styles,
+  cues retimed to the dubbed audio.
 
 ## Speaker diarization
 
@@ -800,6 +834,15 @@ and reports missing, changed, or unlisted files; `dubber export`
 takes the dubbed audio plus optional subtitles, report, original and
 rendered video, and `dubber export --verify` checks a bundle
 (the demo's tampered copy fails verification on both hash and size).
+ASS subtitle export is done (576 tests): `subtitles.to_ass` writes a
+real `.ass` file — `[Script Info]`, one named style per speaker in
+`[V4+ Styles]` (colours from an 8-entry palette, names sanitised so
+two speakers never collide), and one `Dialogue` line per timed segment
+with centisecond timestamps truncated, never rounded up; `convert
+--format ass` exports any transcript, and `dub`/`patch --subtitles`
+write the `.ass` next to the `.srt`/`.vtt` (the demo's two speakers
+render white and yellow, and the same file feeds `render --subtitles`
+directly).
 Remaining: the self-review
 checklist and public flip — the
 project stays private per the 5–7 day pace rule (started 2026-11-08,

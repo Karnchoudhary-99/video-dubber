@@ -2275,3 +2275,99 @@ def test_cli_dub_max_segment_duration_needs_split_flag(tmp_path, capsys):
         == 2
     )
     assert "needs --split-segments" in capsys.readouterr().err
+
+
+# --- ASS subtitles ------------------------------------------------------------
+
+
+def test_cli_convert_ass(tmp_path):
+    transcript = tmp_path / "t.json"
+    transcript.write_text(
+        Transcript(
+            segments=[
+                {
+                    "words": [
+                        {"text": "Hello", "start": 0.0, "end": 0.5},
+                        {"text": "world", "start": 0.5, "end": 1.0},
+                    ],
+                    "speaker": "Asha",
+                },
+                {
+                    "words": [{"text": "Hi", "start": 2.0, "end": 2.5}],
+                    "speaker": "Ravi",
+                },
+            ],
+            language="en",
+        ).to_json()
+    )
+    out = tmp_path / "subs.ass"
+    assert main(["convert", str(transcript), "--format", "ass", "--out", str(out)]) == 0
+    text = out.read_text(encoding="utf-8")
+    assert "[Script Info]" in text
+    assert "[V4+ Styles]" in text
+    assert "Style: Asha," in text and "Style: Ravi," in text
+    # Asha gets the first palette colour (white), Ravi the second (yellow).
+    assert "&H00FFFFFF" in text  # Asha / Default white
+    assert "&H0000FFFF" in text  # Ravi yellow (#FFFF00 -> &H0000FFFF)
+    assert "Dialogue: 0,0:00:00.00,0:00:01.00,Asha,Asha,0,0,0,,Hello world" in text
+    assert "Dialogue: 0,0:00:02.00,0:00:02.50,Ravi,Ravi,0,0,0,,Hi" in text
+
+
+def test_cli_dub_writes_ass_subtitles(tmp_path):
+    transcript = tmp_path / "hi.json"
+    _write_dub_transcript(transcript)
+    profile = tmp_path / "dub.json"
+    _write_dub_profile(profile)
+    out = tmp_path / "dub.wav"
+    assert (
+        main(
+            [
+                "dub",
+                str(transcript),
+                "--profile",
+                str(profile),
+                "--out",
+                str(out),
+                "--subtitles",
+            ]
+        )
+        == 0
+    )
+    ass = (tmp_path / "dub.ass").read_text(encoding="utf-8")
+    assert "[V4+ Styles]" in ass
+    assert ass.count("Dialogue:") == 2
+    assert "नमस्ते दुनिया" in ass
+    assert (tmp_path / "dub.srt").exists()
+    assert (tmp_path / "dub.vtt").exists()
+
+
+def test_cli_patch_writes_ass_subtitles(tmp_path):
+    dub, transcript, profile, report = _make_dubbed(tmp_path)
+    out = tmp_path / "patched.wav"
+    assert (
+        main(
+            [
+                "patch",
+                "--dub",
+                str(dub),
+                "--transcript",
+                str(transcript),
+                "--profile",
+                str(profile),
+                "--segment",
+                "2",
+                "--text",
+                "बदला हुआ",
+                "--out",
+                str(out),
+                "--report",
+                str(report),
+                "--subtitles",
+            ]
+        )
+        == 0
+    )
+    ass = (tmp_path / "patched.ass").read_text(encoding="utf-8")
+    assert "बदला हुआ" in ass
+    assert "नमस्ते दुनिया" in ass
+    assert ass.count("Dialogue:") == 2
