@@ -34,6 +34,7 @@ Subcommands (see ``video-dubber <cmd> --help`` for details):
 import argparse
 import os
 import sys
+from pathlib import Path
 
 from video_dubber import __version__
 from video_dubber.assemble import (
@@ -72,6 +73,13 @@ from video_dubber.enhance import (
     enhance_audio,
 )
 from video_dubber.estimate import BACKEND_RTF, EstimateError, estimate_dub
+from video_dubber.export import (
+    ExportError,
+    build_manifest,
+    export_bundle,
+    export_zip,
+    verify_bundle,
+)
 from video_dubber.extract import ExtractionError, extract_audio
 from video_dubber.fidelity import FidelityError, check_fidelity
 from video_dubber.multilang import MultiTargetError, dub_all_targets, parse_targets
@@ -684,6 +692,47 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["json", "md"],
         default="json",
         help="Render report format (default json).",
+    )
+
+    p_export = sub.add_parser(
+        "export",
+        help="Pack a finished dub into a portable bundle (directory or .zip).",
+    )
+    p_export.add_argument(
+        "dub_audio",
+        nargs="?",
+        help="Dubbed audio track (WAV) to export (not needed with --verify).",
+    )
+    p_export.add_argument("--target", help="Target language code (e.g. hi).")
+    p_export.add_argument(
+        "--source", default="en", help="Source language code (default en)."
+    )
+    p_export.add_argument("--subtitles", help="Retimed SRT subtitles to include.")
+    p_export.add_argument("--subtitles-vtt", help="Retimed WebVTT subtitles to include.")
+    p_export.add_argument("--report", help="Dub quality report JSON to include.")
+    p_export.add_argument("--original", help="Original video/audio to include.")
+    p_export.add_argument("--video", help="Rendered dubbed video (MP4) to include.")
+    p_export.add_argument(
+        "--speakers", help="Comma-separated speaker names for the manifest."
+    )
+    p_export.add_argument(
+        "--out", help="Bundle directory, or .zip path (default format follows --out)."
+    )
+    p_export.add_argument(
+        "--format",
+        choices=["dir", "zip"],
+        default=None,
+        help="Bundle format (default: zip when --out ends in .zip, else a directory).",
+    )
+    p_export.add_argument(
+        "--name", help="Bundle name (default: dubbed-audio stem + target language)."
+    )
+    p_export.add_argument(
+        "--force", action="store_true", help="Overwrite a non-empty directory / file."
+    )
+    p_export.add_argument(
+        "--verify",
+        help="Verify a directory bundle against its manifest instead of exporting.",
     )
 
     p_batch = sub.add_parser("batch", help="Dub many jobs from a manifest JSON file.")
@@ -1595,6 +1644,49 @@ def _cmd_render(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_export(args: argparse.Namespace) -> int:
+    if args.verify:
+        problems = verify_bundle(args.verify)
+        if problems:
+            for problem in problems:
+                print(f"FAIL: {problem}")
+            return 1
+        print(f"bundle intact: {args.verify}")
+        return 0
+    if not args.dub_audio:
+        raise ValueError("export needs a dubbed audio file (or --verify <bundle-dir>)")
+    if not args.target:
+        raise ValueError("export needs --target (the dub's language code)")
+    if not args.out:
+        raise ValueError("export needs --out (bundle directory or .zip path)")
+    name = args.name or f"{Path(args.dub_audio).stem}.{args.target}"
+    speakers = (
+        [s.strip() for s in args.speakers.split(",") if s.strip()]
+        if args.speakers
+        else None
+    )
+    manifest, sources = build_manifest(
+        name,
+        dub_audio=args.dub_audio,
+        target=args.target,
+        source=args.source,
+        subtitles_srt=args.subtitles,
+        subtitles_vtt=args.subtitles_vtt,
+        report=args.report,
+        original=args.original,
+        rendered_video=args.video,
+        speakers=speakers,
+    )
+    fmt = args.format or ("zip" if args.out.lower().endswith(".zip") else "dir")
+    if fmt == "zip":
+        written = export_zip(manifest, sources, args.out, overwrite=args.force)
+    else:
+        written = export_bundle(manifest, sources, args.out, overwrite=args.force)
+    print(manifest.to_markdown(), end="")
+    print(f"wrote {written}")
+    return 0
+
+
 def _cmd_compare(args: argparse.Namespace) -> int:
     with open(args.report_a, encoding="utf-8") as fh:
         report_a = DubReport.from_json(fh.read())
@@ -1805,6 +1897,8 @@ def main(argv=None) -> int:
             return _cmd_compare(args)
         if args.command == "estimate":
             return _cmd_estimate(args)
+        if args.command == "export":
+            return _cmd_export(args)
         if args.command == "render":
             return _cmd_render(args)
         if args.command == "batch":
@@ -1819,6 +1913,7 @@ def main(argv=None) -> int:
         CacheError,
         DiarizeError,
         EstimateError,
+        ExportError,
         ExtractionError,
         MultiTargetError,
         PatchError,
