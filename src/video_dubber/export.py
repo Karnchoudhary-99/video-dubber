@@ -28,7 +28,7 @@ import json
 import shutil
 import zipfile
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from video_dubber import __version__
@@ -277,7 +277,7 @@ def build_manifest(
     ]
     manifest = ExportManifest(
         name=name,
-        created_utc=created_utc or datetime.now(timezone.utc).isoformat(),
+        created_utc=created_utc or datetime.now(UTC).isoformat(),
         dubber_version=__version__,
         source_language=source,
         target_language=target,
@@ -355,9 +355,7 @@ def verify_bundle(directory: str | Path) -> list[str]:
     if not manifest_path.is_file():
         return [f"no manifest.json in {directory}"]
     try:
-        manifest = ExportManifest.from_json(
-            manifest_path.read_text(encoding="utf-8")
-        )
+        manifest = ExportManifest.from_json(manifest_path.read_text(encoding="utf-8"))
     except ValueError as exc:
         return [f"manifest.json is invalid: {exc}"]
     problems: list[str] = []

@@ -1,5 +1,4 @@
 import hashlib
-import json
 import zipfile
 
 import pytest
@@ -58,9 +57,7 @@ def test_manifest_json_round_trip():
         verdict="review",
         mos_proxy=3.53,
         speakers=["Asha"],
-        files=[
-            ExportFile("dubbed_audio", "clip.hi.wav", "a" * 64, 1234, "clip.wav")
-        ],
+        files=[ExportFile("dubbed_audio", "clip.hi.wav", "a" * 64, 1234, "clip.wav")],
     )
     rebuilt = ExportManifest.from_json(manifest.to_json())
     assert rebuilt == manifest
@@ -131,9 +128,7 @@ def test_build_manifest_rejects_missing_files_and_bad_names(tmp_path):
     with pytest.raises(ExportError, match="not found"):
         build_manifest("clip.hi", dub_audio=tmp_path / "gone.wav", target="hi")
     with pytest.raises(ExportError, match="not found"):
-        build_manifest(
-            "clip.hi", dub_audio=dub, target="hi", subtitles_srt=tmp_path / "gone.srt"
-        )
+        build_manifest("clip.hi", dub_audio=dub, target="hi", subtitles_srt=tmp_path / "gone.srt")
     with pytest.raises(ExportError, match="must not be empty"):
         build_manifest("", dub_audio=dub, target="hi")
     with pytest.raises(ExportError, match="must not be empty"):
@@ -147,9 +142,7 @@ def test_build_manifest_prefixes_colliding_basenames(tmp_path):
     dubbed = tmp_path / "dubbed" / "clip.wav"
     dubbed.parent.mkdir()
     save_wav(str(dubbed), make_silence(0.25))
-    manifest, _ = build_manifest(
-        "clip.hi", dub_audio=dubbed, target="hi", original=original
-    )
+    manifest, _ = build_manifest("clip.hi", dub_audio=dubbed, target="hi", original=original)
     names = [entry.filename for entry in manifest.files]
     assert names == ["clip.wav", "original_clip.wav"]
     assert manifest.source_file == "clip.wav"
@@ -160,9 +153,7 @@ def test_export_bundle_copies_files_and_verifies(tmp_path):
     _wav(dub)
     report_path = tmp_path / "report.json"
     _report(report_path)
-    manifest, sources = build_manifest(
-        "clip.hi", dub_audio=dub, target="hi", report=report_path
-    )
+    manifest, sources = build_manifest("clip.hi", dub_audio=dub, target="hi", report=report_path)
     out = tmp_path / "bundle"
     manifest_path = export_bundle(manifest, sources, out)
     assert manifest_path == out / "manifest.json"
@@ -171,9 +162,7 @@ def test_export_bundle_copies_files_and_verifies(tmp_path):
     assert (out / "README.md").is_file()
     assert verify_bundle(out) == []
     # The manifest inside the bundle loads back identically.
-    assert ExportManifest.from_json(
-        (out / "manifest.json").read_text(encoding="utf-8")
-    ) == manifest
+    assert ExportManifest.from_json((out / "manifest.json").read_text(encoding="utf-8")) == manifest
 
 
 def test_verify_bundle_reports_tamper_missing_and_extra(tmp_path):
@@ -228,9 +217,7 @@ def test_export_zip_round_trip(tmp_path):
     _wav(dub)
     srt = tmp_path / "dub.srt"
     srt.write_text("1\n00:00:00,000 --> 00:00:00,500\nNamaste\n", encoding="utf-8")
-    manifest, sources = build_manifest(
-        "clip.hi", dub_audio=dub, target="hi", subtitles_srt=srt
-    )
+    manifest, sources = build_manifest("clip.hi", dub_audio=dub, target="hi", subtitles_srt=srt)
     zipped = export_zip(manifest, sources, tmp_path / "clip.hi.zip")
     assert zipped.is_file()
     with zipfile.ZipFile(zipped) as zf:
@@ -262,6 +249,7 @@ def test_export_zip_verifies_after_extraction(tmp_path):
 
 
 # --- CLI ---------------------------------------------------------------
+
 
 def test_cli_export_dir_and_verify(tmp_path, capsys):
     from video_dubber.cli import main

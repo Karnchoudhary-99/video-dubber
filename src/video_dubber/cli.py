@@ -704,17 +704,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Dubbed audio track (WAV) to export (not needed with --verify).",
     )
     p_export.add_argument("--target", help="Target language code (e.g. hi).")
-    p_export.add_argument(
-        "--source", default="en", help="Source language code (default en)."
-    )
+    p_export.add_argument("--source", default="en", help="Source language code (default en).")
     p_export.add_argument("--subtitles", help="Retimed SRT subtitles to include.")
     p_export.add_argument("--subtitles-vtt", help="Retimed WebVTT subtitles to include.")
     p_export.add_argument("--report", help="Dub quality report JSON to include.")
     p_export.add_argument("--original", help="Original video/audio to include.")
     p_export.add_argument("--video", help="Rendered dubbed video (MP4) to include.")
-    p_export.add_argument(
-        "--speakers", help="Comma-separated speaker names for the manifest."
-    )
+    p_export.add_argument("--speakers", help="Comma-separated speaker names for the manifest.")
     p_export.add_argument(
         "--out", help="Bundle directory, or .zip path (default format follows --out)."
     )
@@ -1660,11 +1656,7 @@ def _cmd_export(args: argparse.Namespace) -> int:
     if not args.out:
         raise ValueError("export needs --out (bundle directory or .zip path)")
     name = args.name or f"{Path(args.dub_audio).stem}.{args.target}"
-    speakers = (
-        [s.strip() for s in args.speakers.split(",") if s.strip()]
-        if args.speakers
-        else None
-    )
+    speakers = [s.strip() for s in args.speakers.split(",") if s.strip()] if args.speakers else None
     manifest, sources = build_manifest(
         name,
         dub_audio=args.dub_audio,
