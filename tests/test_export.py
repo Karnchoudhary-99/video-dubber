@@ -259,3 +259,84 @@ def test_export_zip_verifies_after_extraction(tmp_path):
     with zipfile.ZipFile(zipped) as zf:
         zf.extractall(extracted)
     assert verify_bundle(extracted) == []
+
+
+# --- CLI ---------------------------------------------------------------
+
+def test_cli_export_dir_and_verify(tmp_path, capsys):
+    from video_dubber.cli import main
+
+    dub = tmp_path / "dub.wav"
+    _wav(dub)
+    srt = tmp_path / "dub.srt"
+    srt.write_text("1\n00:00:00,000 --> 00:00:00,500\nNamaste\n", encoding="utf-8")
+    report_path = tmp_path / "report.json"
+    _report(report_path, verdict="good", mos=4.5)
+    out = tmp_path / "bundle"
+    assert (
+        main(
+            [
+                "export",
+                str(dub),
+                "--target",
+                "hi",
+                "--subtitles",
+                str(srt),
+                "--report",
+                str(report_path),
+                "--speakers",
+                "Asha, Ravi",
+                "--out",
+                str(out),
+            ]
+        )
+        == 0
+    )
+    printed = capsys.readouterr().out
+    assert "dub.hi" in printed  # default bundle name: stem + target
+    assert "Asha, Ravi" in printed
+    assert (out / "manifest.json").is_file()
+    assert main(["export", "--verify", str(out)]) == 0
+    assert "bundle intact" in capsys.readouterr().out
+
+
+def test_cli_export_zip_and_verify_failure(tmp_path, capsys):
+    from video_dubber.cli import main
+
+    dub = tmp_path / "dub.wav"
+    _wav(dub)
+    zipped = tmp_path / "clip.hi.zip"
+    assert main(["export", str(dub), "--target", "hi", "--out", str(zipped)]) == 0
+    assert zipped.is_file()
+    # A zip is not a directory bundle: --verify reports the missing manifest.
+    assert main(["export", "--verify", str(zipped)]) == 1
+    assert "no manifest.json" in capsys.readouterr().out
+
+
+def test_cli_export_missing_args_and_missing_file(tmp_path, capsys):
+    from video_dubber.cli import main
+
+    dub = tmp_path / "dub.wav"
+    _wav(dub)
+    assert main(["export"]) == 1
+    assert "needs a dubbed audio file" in capsys.readouterr().err
+    assert main(["export", str(dub)]) == 1
+    assert "needs --target" in capsys.readouterr().err
+    assert main(["export", str(dub), "--target", "hi"]) == 1
+    assert "needs --out" in capsys.readouterr().err
+    assert (
+        main(
+            [
+                "export",
+                str(tmp_path / "gone.wav"),
+                "--target",
+                "hi",
+                "--out",
+                str(tmp_path / "b"),
+            ]
+        )
+        == 1
+    )
+    assert "not found" in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        main(["export", str(dub), "--target", "hi", "--out", "x", "--format", "tar"])
