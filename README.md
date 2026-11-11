@@ -28,6 +28,7 @@ keeping the speaker's voice.
 - [ ] Self-review checklist, then public
 - [x] Synthesis cache (skip re-synthesising unchanged segments, LRU eviction, `cache` CLI)
 - [x] Dub cost/time estimator (predicted durations, fit factors, wall time, cache savings, cost)
+- [x] Segment splitting (cut long lines at silence gaps so each piece fits its window)
 
 ## Quick start
 
@@ -635,6 +636,42 @@ excluded — via `--price-per-char` or `--price-per-minute`
 estimate. Probing the cache is read-only: it never loads audio or
 moves hit counters. Demo: `python examples/demo_estimate.py`.
 
+## Segment splitting
+
+A long segment is the dub assembler's worst case: the whole line must
+be stretched or squeezed into one window, so a 20-second sentence in
+a 12-second window needs a 0.6x fit and the quality report flags it.
+`dubber split` cuts over-long segments at real pauses instead:
+
+```bash
+video-dubber split transcript.json --out split.json --audio source.wav
+# # Segment split
+# - Segments: 1 -> 2 (1 split)
+# - Longest segment: 9.10s -> 4.10s
+#
+# | Segment | Cut at | Reason |
+# | --- | --- | --- |
+# | 1 | 4.10s | silence |
+```
+
+A boundary is splittable when the pause there is at least `--min-gap`
+(default 0.4s) — read off the word timings, and, when `--audio` is
+given, confirmed against VAD silence gaps, so a cut point is found
+even when the word timings are coarse (VAD edges are frame-quantised
+plus hangover, so a boundary up to 150 ms before a silence interval
+starts still counts). `--max-duration` (default 8.0s) sets the longest
+piece; `--min-segment` (default 1.0s) keeps the splitter from leaving
+a stub when a choice exists. When a piece runs over the limit with no
+silence candidate, the split falls back to the longest pause inside
+the piece, and only as a last resort to a forced cut at the word
+nearest the limit — forced cuts are counted in the report, not hidden,
+and a single long word is never cut. Speaker labels survive on every
+piece, and the input transcript is untouched. `dub --split-segments`
+(`--max-segment-duration`) applies the same split to the translated
+transcript before synthesis, so each piece fits its window; the split
+report prints first and the quality report reflects the split
+segments. Demo: `python examples/demo_split.py`.
+
 ## Status
 
 Audio extraction + transcription are done (62 tests). Translation is done
@@ -718,6 +755,15 @@ backend's real-time factor, cache savings via a read-only
 per-minute rate; `dubber estimate` takes `--profile/--wpm/--rtf/
 --cache-dir/--price-per-char/--price-per-minute/--currency/--format/
 --out`, and unknown backends require `--rtf` rather than guessing.
+Segment splitting is done (547 tests): `split.py` cuts segments
+longer than `--max-duration` at silence gaps from the word timings
+or, with `--audio`, VAD-confirmed pauses, falling back to the longest
+pause and then a counted forced cut (a test caught the longest-gap
+search excluding the piece's last word; a VAD edge-tolerance of
+150 ms covers frame quantisation plus hangover); `dubber split`
+writes the split transcript plus a Markdown/JSON report, and
+`dub --split-segments` splits before synthesis so each piece fits
+its window.
 Remaining: the self-review
 checklist and public flip — the
 project stays private per the 5–7 day pace rule (started 2026-11-08,

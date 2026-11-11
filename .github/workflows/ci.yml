@@ -32,3 +32,4 @@ jobs:
       - run: python examples/demo_cache.py
       - run: python examples/demo_render.py
       - run: python examples/demo_estimate.py
+      - run: python examples/demo_split.py
