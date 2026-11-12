@@ -37,6 +37,7 @@ keeping the speaker's voice.
 - [x] Dubbing style presets (documentary/conversational/energetic/narration/dramatic, `dub --style`, `dubber styles`)
 - [x] Pronunciation lexicon (names/acronyms spoken as the lexicon says, `dub --lexicon`, `dubber lexicon`)
 - [x] Subtitle alignment (shift cues to the speech in the rendered dub, `dubber align`, `--max-shift` clamp)
+- [x] Subtitle QA (readability checks: reading speed, line width, cue length, overlaps, gaps, `dubber qa`)
 
 ## Quick start
 
@@ -507,6 +508,43 @@ video-dubber align dub.wav planned.json --out aligned.json --report-out align.md
 - Demo: `python examples/demo_align.py` — two lines whose tones start
   0.3s late align to +240 ms each, and the clamped pass (max shift
   0.1s) honestly reports both rows as `clamped` at +100 ms.
+
+## Subtitle QA (readability checks)
+
+Alignment moves cues to the speech, but a cue can still be
+unreadable — too fast, too long for the screen, or overlapping the
+next line. `dubber qa` checks the finished transcript against the
+usual broadcast readability rules before the video is muxed, when a
+fix is still cheap:
+
+```bash
+video-dubber qa dubbed.json --report-out qa.md
+# # Subtitle QA report
+# - Verdict: **review**
+# - Errors: 1, warnings: 5
+# - Segment 4 (11.50-13.50s) [error] overlap: starts 500 ms before the previous cue ends
+```
+
+- **too-fast** — over 20 chars/s by default (`--max-cps`); most
+  broadcasters cap reading speed at 17–20 chars/s.
+- **too-many-lines** — wraps to more than 2 lines at 42 chars per
+  line (`--max-line`, `--max-lines`); **long-word** — a single word
+  longer than one line, so no wrap can save it.
+- **too-short** / **too-long** — a cue under 1s (`--min-cue`) never
+  lets the eye settle; over 7s (`--max-cue`) it sits on screen long
+  after the viewer has finished reading.
+- **overlap** — a cue starting before the previous one ends, so the
+  player shows two lines at once; the only *error*, everything else
+  is a warning. **tiny-gap** — under 80 ms (`--min-gap`, two frames
+  at 25 fps) between cues, so the viewer never sees the line change.
+- The verdict is `pass` only when there are no issues at all.
+  The CLI exits 1 on errors, and on warnings too with
+  `--fail-on-warn` — so `dubber qa` can gate a mux in CI. `--json`
+  prints the report as JSON and `--report-out` writes it to a file.
+- Demo: `python examples/demo_qa.py` — a five-cue transcript with
+  one of every problem (47 chars/s, an 8s cue wrapping to 3 lines,
+  a 500 ms overlap, a 0.4s cue 50 ms after the last one) reports 1
+  error and 5 warnings, and a clean transcript passes.
 
 ## Speaker diarization
 
@@ -1149,6 +1187,14 @@ the clamped pass honestly reports both rows at +100 ms). Two VAD
 behaviours surfaced while testing and are documented in the module:
 all-tone audio has no noise floor for the adaptive threshold, and
 the 60 ms hangover bleeds into adjacent gaps.
+Subtitle QA is done (745 tests): `qa.py` checks the finished
+transcript's cues against broadcast readability rules — 20 chars/s
+reading speed, 42-char lines with at most 2 per cue, 1–7s cue
+length, 80 ms minimum gap — and flags overlaps as errors and
+everything else as warnings, with a pass/review verdict and a
+JSON/Markdown report. `dubber qa` exits 1 on errors (and on warnings
+with `--fail-on-warn`), so it can gate a mux in CI; the demo's
+five-cue transcript honestly reports 1 error and 5 warnings.
 Remaining: the self-review
 checklist and public flip — the
 project stays private per the 5–7 day pace rule (started 2026-11-08,

@@ -34,6 +34,8 @@ Subcommands (see ``video-dubber <cmd> --help`` for details):
 * ``align`` — shift subtitle cues to the speech actually in the
   rendered dub audio, so no cue sits over leading silence or lingers
   after the voice stops.
+* ``qa`` — check a transcript's subtitles for readability (reading
+  speed, line width, cue length, overlaps, gaps) before muxing.
 * ``estimate`` — predict a dub before running it: speech durations, fit
   factors, wall time, cache savings and cost, from a translated transcript.
 * ``batch`` — dub many videos/transcripts from one manifest JSON file.
@@ -104,6 +106,7 @@ from video_dubber.merge import MergeConfig, MergeError, merge_transcript
 from video_dubber.multilang import MultiTargetError, dub_all_targets, parse_targets
 from video_dubber.patch import PatchError, patch_dub, patch_transcript, refresh_report
 from video_dubber.preflight import run_preflight
+from video_dubber.qa import QaConfig, QaError, qa_transcript
 from video_dubber.render import RenderError, SubtitleStyle, render_preview, render_video
 from video_dubber.report import render_html_report
 from video_dubber.split import SplitConfig, SplitError, split_transcript
@@ -680,6 +683,55 @@ def build_parser() -> argparse.ArgumentParser:
     p_align.add_argument(
         "--report-out",
         help="Write the alignment report (Markdown, or JSON with --json) here.",
+    )
+
+    p_qa = sub.add_parser("qa", help="Check a transcript's subtitles for readability.")
+    p_qa.add_argument("transcript", help="Transcript JSON file whose cues to check.")
+    p_qa.add_argument(
+        "--max-cps",
+        type=float,
+        default=None,
+        help=f"Max reading speed in chars/s (default {QaConfig().max_cps}).",
+    )
+    p_qa.add_argument(
+        "--max-line",
+        type=int,
+        default=None,
+        help=f"Max characters per subtitle line (default {QaConfig().max_line_chars}).",
+    )
+    p_qa.add_argument(
+        "--max-lines",
+        type=int,
+        default=None,
+        help=f"Max lines per cue (default {QaConfig().max_lines}).",
+    )
+    p_qa.add_argument(
+        "--min-cue",
+        type=float,
+        default=None,
+        help=f"Shortest readable cue, in seconds (default {QaConfig().min_cue_s}).",
+    )
+    p_qa.add_argument(
+        "--max-cue",
+        type=float,
+        default=None,
+        help=f"Longest readable cue, in seconds (default {QaConfig().max_cue_s}).",
+    )
+    p_qa.add_argument(
+        "--min-gap",
+        type=float,
+        default=None,
+        help=f"Min gap between cues, in seconds (default {QaConfig().min_gap_s}).",
+    )
+    p_qa.add_argument("--json", action="store_true", help="Print the report as JSON.")
+    p_qa.add_argument(
+        "--report-out",
+        help="Write the QA report (Markdown, or JSON with --json) here.",
+    )
+    p_qa.add_argument(
+        "--fail-on-warn",
+        action="store_true",
+        help="Exit 1 on warnings too, not just errors.",
     )
 
     p_preflight = sub.add_parser(
@@ -1975,6 +2027,30 @@ def _cmd_align(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_qa(args: argparse.Namespace) -> int:
+    with open(args.transcript, encoding="utf-8") as fh:
+        transcript = Transcript.from_json(fh.read())
+    defaults = QaConfig()
+    config = QaConfig(
+        max_cps=args.max_cps if args.max_cps is not None else defaults.max_cps,
+        max_line_chars=args.max_line if args.max_line is not None else defaults.max_line_chars,
+        max_lines=args.max_lines if args.max_lines is not None else defaults.max_lines,
+        min_cue_s=args.min_cue if args.min_cue is not None else defaults.min_cue_s,
+        max_cue_s=args.max_cue if args.max_cue is not None else defaults.max_cue_s,
+        min_gap_s=args.min_gap if args.min_gap is not None else defaults.min_gap_s,
+    )
+    report = qa_transcript(transcript, config)
+    text = report.to_json() if args.json else report.to_markdown()
+    print(text, end="" if text.endswith("\n") else "\n")
+    if args.report_out:
+        with open(args.report_out, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        print(f"wrote {args.report_out}")
+    if report.errors > 0 or (args.fail_on_warn and report.warnings > 0):
+        return 1
+    return 0
+
+
 def _cmd_split(args: argparse.Namespace) -> int:
     with open(args.transcript, encoding="utf-8") as fh:
         transcript = Transcript.from_json(fh.read())
@@ -2351,6 +2427,8 @@ def main(argv=None) -> int:
             return _cmd_level(args)
         if args.command == "align":
             return _cmd_align(args)
+        if args.command == "qa":
+            return _cmd_qa(args)
         if args.command == "preflight":
             return _cmd_preflight(args)
         if args.command == "doctor":
@@ -2387,6 +2465,7 @@ def main(argv=None) -> int:
         MergeError,
         MultiTargetError,
         PatchError,
+        QaError,
         RenderError,
         SplitError,
         TranscriptionError,

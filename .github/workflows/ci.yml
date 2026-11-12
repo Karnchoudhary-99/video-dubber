@@ -58,3 +58,4 @@ jobs:
       - run: python examples/demo_style.py
       - run: python examples/demo_lexicon.py
       - run: python examples/demo_align.py
+      - run: python examples/demo_qa.py
