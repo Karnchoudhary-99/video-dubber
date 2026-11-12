@@ -248,6 +248,28 @@ class TestVerifyReport:
         assert restored == check
 
 
+class TestDemo:
+    def test_demo_verify_runs_end_to_end(self):
+        """The example script is a runnable contract, not just docs."""
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1]
+        run = subprocess.run(
+            [sys.executable, str(root / "examples" / "demo_verify.py")],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        assert run.returncode == 0, run.stderr
+        assert "Verdict: **pass**" in run.stdout
+        assert "Verdict: **review**" in run.stdout
+        assert "closer to Ravi" in run.stdout
+        assert "demo ok" in run.stdout
+
+
 class TestValidation:
     def test_match_bar_must_clear_the_uncertain_bar(self):
         with pytest.raises(VerifyError):
