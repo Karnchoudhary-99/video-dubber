@@ -20,6 +20,7 @@ Subcommands (see ``video-dubber <cmd> --help`` for details):
 * ``doctor`` — check the machine itself: python, ffmpeg, whisper,
   argos-translate, and free disk space.
 * ``synthesize`` — render text as audio in a cloned voice (demo synthesis).
+* ``lexicon`` — check a pronunciation lexicon file, or apply it to text.
 * ``cache`` — inspect or clear the segment synthesis cache.
 * ``dub`` — render a full dubbed track from a translated transcript and
   a speaker profile, with a quality report (and optional video mux).
@@ -89,6 +90,12 @@ from video_dubber.export import (
 )
 from video_dubber.extract import ExtractionError, extract_audio
 from video_dubber.fidelity import FidelityError, check_fidelity
+from video_dubber.lexicon import (
+    LexiconError,
+    PronunciationLexicon,
+    apply_lexicon,
+    load_lexicon,
+)
 from video_dubber.merge import MergeConfig, MergeError, merge_transcript
 from video_dubber.multilang import MultiTargetError, dub_all_targets, parse_targets
 from video_dubber.patch import PatchError, patch_dub, patch_transcript, refresh_report
@@ -258,11 +265,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output format (default text).",
     )
 
+    p_lexicon = sub.add_parser(
+        "lexicon", help="Check a pronunciation lexicon file, or apply it to text."
+    )
+    p_lexicon.add_argument("file", help="Lexicon JSON path.")
+    p_lexicon.add_argument(
+        "--apply",
+        help="Text to rewrite with the lexicon's pronunciations (prints the result).",
+    )
+    p_lexicon.add_argument(
+        "--format",
+        choices=["text", "json", "md"],
+        default="text",
+        help="Report format for --apply (default text).",
+    )
+
     p_synth = sub.add_parser("synthesize", help="Render text in a cloned voice.")
     p_synth.add_argument("text", help="Text to speak.")
     p_synth.add_argument("--profile", required=True, help="Speaker profile JSON path.")
     p_synth.add_argument("--wpm", type=float, help="Speaking rate override.")
     p_synth.add_argument("--semitones", type=float, default=0.0, help="Pitch shift in semitones.")
+    p_synth.add_argument(
+        "--lexicon",
+        help="Pronunciation lexicon JSON: names/acronyms are spoken as the lexicon "
+        "says (default: lexicon from dubber.toml).",
+    )
     p_synth.add_argument("--out", required=True, help="Output WAV path.")
     p_synth.add_argument(
         "--cache-dir",
@@ -348,6 +375,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Delivery style for the dub (documentary, conversational, "
         "energetic, narration, dramatic; default: style from dubber.toml, "
         "else the plain voice).",
+    )
+    p_dub.add_argument(
+        "--lexicon",
+        default=None,
+        help="Pronunciation lexicon JSON: names/acronyms are spoken as the lexicon "
+        "says (default: lexicon from dubber.toml).",
     )
     p_dub.add_argument("--out", required=True, help="Output dubbed WAV path.")
     p_dub.add_argument("--video", help="Original video to mux the dub into.")
@@ -451,6 +484,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Delivery style for every target (default: style from dubber.toml, "
         "else the plain voice).",
+    )
+    p_dub_multi.add_argument(
+        "--lexicon",
+        default=None,
+        help="Pronunciation lexicon JSON, applied to every target "
+        "(default: lexicon from dubber.toml).",
     )
     p_dub_multi.add_argument(
         "--enhance",
@@ -986,6 +1025,43 @@ def _resolve_style(args: argparse.Namespace, config: DubberConfig) -> str | None
     return get_style(name).name
 
 
+def _resolve_lexicon(args: argparse.Namespace, config: DubberConfig) -> PronunciationLexicon | None:
+    """Effective pronunciation lexicon: --lexicon wins over dubber.toml.
+
+    Returns None when neither is set. Raises :class:`LexiconError`
+    for an unreadable or invalid file — the caller turns that into
+    exit 2, so a bad lexicon path never silently dubs unpronounced.
+    """
+    path = getattr(args, "lexicon", None) or config.lexicon
+    if path is None:
+        return None
+    return load_lexicon(path)
+
+
+def _cmd_lexicon(args: argparse.Namespace) -> int:
+    try:
+        lexicon = load_lexicon(args.file)
+    except LexiconError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if args.apply is None:
+        print(f"{args.file}: {len(lexicon)} pronunciation(s)")
+        for word, pronunciation in sorted(lexicon.entries.items()):
+            print(f"  {word} -> {pronunciation}")
+        return 0
+    applied = apply_lexicon(args.apply, lexicon)
+    if args.format == "json":
+        print(applied.to_json())
+    elif args.format == "md":
+        print(applied.to_markdown(), end="")
+    else:
+        print(applied.text)
+        if applied.replacements:
+            for matched, spoken in applied.replacements:
+                print(f"  {matched} -> {spoken}")
+    return 0
+
+
 def _cmd_config(args: argparse.Namespace) -> int:
     config = _load_config(args)
     if config is None:
@@ -1016,6 +1092,8 @@ def _config_to_toml(config: DubberConfig) -> str:
         lines.append(f"bed_level = {config.bed_level}")
     if config.style is not None:
         lines.append(f"style = {json.dumps(config.style)}")
+    if config.lexicon is not None:
+        lines.append(f"lexicon = {json.dumps(config.lexicon)}")
     lines.append("")
     lines.append("[dubber.enhance]")
     for key in ("target", "ceiling", "high_pass", "gate"):
@@ -1334,15 +1412,30 @@ def _cmd_cache(args: argparse.Namespace) -> int:
 
 
 def _cmd_synthesize(args: argparse.Namespace) -> int:
+    config = _load_config(args)
+    if config is None:
+        return 2
+    try:
+        lexicon = _resolve_lexicon(args, config)
+    except LexiconError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     with open(args.profile, encoding="utf-8") as fh:
         profile = SpeakerProfile.from_json(fh.read())
     if args.semitones or args.wpm:
         profile = adjust_prosody(profile, semitones=args.semitones, words_per_minute=args.wpm)
     cloner = _cached_cloner(args)
-    audio = cloner.synthesize(args.text, profile)
+    text = args.text
+    if lexicon is not None:
+        applied = apply_lexicon(text, lexicon)
+        text = applied.text
+        if applied.replacements:
+            for matched, spoken in applied.replacements:
+                print(f"lexicon: {matched} -> {spoken}")
+    audio = cloner.synthesize(text, profile)
     save_wav(args.out, audio)
     print(
-        f"synthesized {len(args.text.split())} words in {profile.name}'s voice: "
+        f"synthesized {len(text.split())} words in {profile.name}'s voice: "
         f"{audio.duration:.2f}s -> {args.out}"
     )
     if isinstance(cloner, CachedVoiceCloner):
@@ -1405,6 +1498,11 @@ def _cmd_dub(args: argparse.Namespace) -> int:
     except StyleError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+    try:
+        lexicon = _resolve_lexicon(args, config)
+    except LexiconError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     with open(args.transcript, encoding="utf-8") as fh:
         transcript = Transcript.from_json(fh.read())
     with open(args.profile, encoding="utf-8") as fh:
@@ -1438,6 +1536,13 @@ def _cmd_dub(args: argparse.Namespace) -> int:
         transcript, split_report = split_transcript(transcript, original, split_config)
         print(split_report.to_markdown(), end="")
     cloner = _cached_cloner(args)
+    lexicon_applied = 0
+    if lexicon is not None:
+        lexicon_applied = sum(
+            apply_lexicon(segment.text, lexicon).applied_count
+            for segment in transcript.segments
+            if segment.words
+        )
     dub_audio, fit_factors, placed = dub_transcript(
         transcript,
         cloner,
@@ -1446,6 +1551,7 @@ def _cmd_dub(args: argparse.Namespace) -> int:
         profiles=profiles,
         bed_level=bed_level,
         style=style,
+        lexicon=lexicon,
     )
     enhancement = None
     if args.enhance:
@@ -1480,10 +1586,13 @@ def _cmd_dub(args: argparse.Namespace) -> int:
         bed_level=bed_level,
         enhancement=enhancement,
         style=style,
+        lexicon_applied=lexicon_applied,
     )
     print(f"dubbed {report.segments_dubbed} segments, {dub_audio.duration:.2f}s -> {args.out}")
     if report.style is not None:
         print(f"delivery style: {report.style}")
+    if report.lexicon_applied:
+        print(f"lexicon pronunciations applied: {report.lexicon_applied}")
     summary = _cache_summary(cloner)
     if summary is not None:
         print(summary)
@@ -1568,6 +1677,11 @@ def _cmd_dub_multi(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     try:
+        lexicon = _resolve_lexicon(args, config)
+    except LexiconError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    try:
         targets = parse_targets(args.targets)
     except MultiTargetError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -1605,6 +1719,7 @@ def _cmd_dub_multi(args: argparse.Namespace) -> int:
         subtitles=not args.no_subtitles,
         stop_on_error=args.stop_on_error,
         style=style,
+        lexicon=lexicon,
     )
     summary_path = os.path.join(args.out_dir, f"{args.stem}.multilang.json")
     with open(summary_path, "w", encoding="utf-8") as fh:
@@ -2155,6 +2270,8 @@ def main(argv=None) -> int:
             return _cmd_voices(args)
         if args.command == "styles":
             return _cmd_styles(args)
+        if args.command == "lexicon":
+            return _cmd_lexicon(args)
         if args.command == "diarize":
             return _cmd_diarize(args)
         if args.command == "synthesize":
