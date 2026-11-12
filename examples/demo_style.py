@@ -46,16 +46,12 @@ def main() -> int:
         ],
         language="hi",
     )
-    profile = SpeakerProfile(
-        name="Demo", embedding=[0.25] * EMBEDDING_DIM, base_pitch_hz=180.0
-    )
+    profile = SpeakerProfile(name="Demo", embedding=[0.25] * EMBEDDING_DIM, base_pitch_hz=180.0)
     cloner = ScriptedVoiceCloner()
 
     fits: dict[str, float] = {}
     for style_name in (None, "energetic", "dramatic"):
-        dub, factors, placed = dub_transcript(
-            transcript, cloner, profile, style=style_name
-        )
+        dub, factors, placed = dub_transcript(transcript, cloner, profile, style=style_name)
         report = build_report(transcript, placed, factors, dub, style=style_name)
         label = style_name or "plain"
         fits[label] = report.mean_fit_factor
