@@ -199,6 +199,20 @@ class TestVerifyReport:
         # Ravi's only segment is silent, so he has no scored entry.
         assert "Ravi" not in report.per_speaker
 
+    def test_all_skipped_report_still_passes(self):
+        # Every segment silent: nothing scored, so nothing can fail —
+        # but the report must say so honestly instead of claiming a
+        # similarity it never measured.
+        audio = make_silence(2.0)
+        report = build_verify_report(verify_dub(audio, _transcript(["Asha", "Ravi"]), _library()))
+        assert report.verdict == "pass"
+        assert report.segments_checked == 0
+        assert report.segments_skipped == 2
+        assert report.mean_similarity is None
+        assert report.worst_index is None
+        assert report.per_speaker == {}
+        assert "n/a (no scored segments)" in report.to_markdown()
+
     def test_clean_report_passes(self):
         audio = concat(make_sine(220.0, 1.0), make_sine(110.0, 1.0))
         report = build_verify_report(verify_dub(audio, _transcript(["Asha", "Ravi"]), _library()))
