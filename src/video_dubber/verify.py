@@ -452,6 +452,7 @@ def build_verify_report(
     )
     worst = min(scored, key=lambda c: c.similarity or 0.0) if scored else None
 
+    verdict_key = {"match": "matches", "uncertain": "uncertain", "mismatch": "mismatches"}
     per_speaker: dict[str, dict] = {}
     for check in scored:
         name = check.speaker or "unknown"
@@ -460,7 +461,7 @@ def build_verify_report(
             {"checked": 0, "matches": 0, "uncertain": 0, "mismatches": 0, "sims": []},
         )
         entry["checked"] += 1
-        entry[check.verdict] += 1
+        entry[verdict_key[check.verdict]] += 1
         entry["sims"].append(check.similarity)
     for entry in per_speaker.values():
         sims = entry.pop("sims")
