@@ -36,6 +36,7 @@ keeping the speaker's voice.
 - [x] Per-segment loudness levelling (`level.py`: even out line volumes, `dubber level`, `dub --level`)
 - [x] Dubbing style presets (documentary/conversational/energetic/narration/dramatic, `dub --style`, `dubber styles`)
 - [x] Pronunciation lexicon (names/acronyms spoken as the lexicon says, `dub --lexicon`, `dubber lexicon`)
+- [x] Subtitle alignment (shift cues to the speech in the rendered dub, `dubber align`, `--max-shift` clamp)
 
 ## Quick start
 
@@ -467,6 +468,45 @@ video-dubber dub translated.json --profile asha.json --lexicon lexicon.json \
   3 pronunciations applied). Both verdicts honestly read `review`:
   the demo's windows are tight for these lines, and the longer
   respellings need the stronger stretch the report shows.
+
+## Subtitle alignment to the rendered dub
+
+`dub --subtitles` retimes cues to the spans the assembler *planned*,
+but the synthesiser does not always start speaking at the window
+edge — a line that opens with 300 ms of leading silence leaves its
+subtitle on screen over silence, and a line that finishes early
+leaves the cue lingering after the voice stops. `dubber align`
+fixes that on the finished track:
+
+```bash
+video-dubber align dub.wav planned.json --out aligned.json --report-out align.md
+# # Subtitle alignment report
+# - Max shift allowed: 1.00s
+# - Mean |start shift|: 240 ms
+# - Segments aligned: 2
+```
+
+- The energy VAD runs once over the whole track, so its adaptive
+  noise floor comes from the track as a whole, not from one window
+  that might be all speech. Each cue's start moves to the first
+  speech onset inside its window and its end to the last offset, and
+  the word timings rescale into the new span.
+- No cue is ever dragged further than `--max-shift` (default 1.0s)
+  from where it was planned, and a cue never overlaps the previous
+  one — a mis-detected onset cannot throw the subtitles out of sync
+  with the video. A move that hits the cap is reported as `clamped`,
+  not silently applied.
+- A window with no detected speech keeps its planned timing and is
+  reported as `no-speech` instead of being dropped or zeroed — the
+  dub may genuinely be silent there. Too-short cues still stretch to
+  the 0.5s readable minimum (`--min-cue`), never past the next cue.
+- `--format srt|vtt` writes the aligned cues straight to a subtitle
+  file; `--json` prints the report as JSON and `--report-out` writes
+  it to a file. Bad parameters fail loudly (exit 1) instead of
+  aligning nothing.
+- Demo: `python examples/demo_align.py` — two lines whose tones start
+  0.3s late align to +240 ms each, and the clamped pass (max shift
+  0.1s) honestly reports both rows as `clamped` at +100 ms.
 
 ## Speaker diarization
 
@@ -1098,6 +1138,17 @@ unguessed. The demo dubs one two-line transcript plain (mean fit
 1.39) and with the lexicon (mean fit 1.19, 3 pronunciations
 applied) — both verdicts honestly read `review`, the demo's windows
 are tight for these lines.
+Subtitle alignment is done (729 tests): `align.py` runs the energy
+VAD once over the finished dub and moves each cue to the speech
+detected inside its planned window, clamped to a 1.0s max shift and
+never overlapping the previous cue; windows with no detected speech
+keep their planned timing and are reported, not dropped. `dubber
+align` writes the aligned transcript as JSON, SRT or VTT plus a
+Markdown/JSON report (the demo's two lines each shift +240 ms, and
+the clamped pass honestly reports both rows at +100 ms). Two VAD
+behaviours surfaced while testing and are documented in the module:
+all-tone audio has no noise floor for the adaptive threshold, and
+the 60 ms hangover bleeds into adjacent gaps.
 Remaining: the self-review
 checklist and public flip — the
 project stays private per the 5–7 day pace rule (started 2026-11-08,
