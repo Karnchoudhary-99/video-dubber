@@ -155,15 +155,23 @@ class AlignmentReport:
             f"- Max |start shift|: {self.max_abs_shift_ms:.0f} ms",
             f"- Segments aligned: {self.segments_aligned}",
             f"- Segments clamped at max shift: {self.segments_clamped}",
-            f"- Segments with no detected speech (kept as planned): "
-            f"{self.segments_no_speech}",
+            (f"- Segments with no detected speech (kept as planned): {self.segments_no_speech}"),
             f"- Segments unchanged: {self.segments_unchanged}",
         ]
         for row in self.rows:
             if row.status == "no-speech":
+                # The start is kept, but retime_transcript may still have
+                # stretched a short cue to the readable minimum — show
+                # the final cue, not just the planned window.
+                kept = (
+                    abs(row.aligned_start - row.planned_start) < 0.001
+                    and abs(row.aligned_end - row.planned_end) < 0.001
+                )
+                note = "kept as planned" if kept else "stretched to the readable minimum"
                 lines.append(
                     f"- Segment {row.index} ({row.planned_start:.2f}-"
-                    f"{row.planned_end:.2f}s): no speech detected, kept as planned"
+                    f"{row.planned_end:.2f}s): no speech detected, cue "
+                    f"{row.aligned_start:.2f}-{row.aligned_end:.2f}s ({note})"
                 )
             else:
                 clamped = " (clamped)" if row.status == "clamped" else ""

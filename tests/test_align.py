@@ -61,16 +61,21 @@ def test_align_moves_cues_to_detected_onsets():
 
 
 def test_align_no_speech_keeps_planned_timing():
-    audio, transcript = _two_line_track()
-    # A segment planned over the silent gap between the two lines.
-    transcript.segments.insert(1, _seg("silent pause", 0.9, 1.2))
+    # Tone, then a full second of silence; the second segment is
+    # planned entirely inside the silence.
+    audio = concat(make_sine(440.0, 0.5, amplitude=0.3), make_silence(1.0))
+    transcript = Transcript(
+        segments=[_seg("spoken line here", 0.0, 0.5), _seg("silent pause", 0.6, 1.4)]
+    )
     aligned, report = align_transcript(audio, transcript)
     assert report.segments_no_speech == 1
     assert report.rows[1].status == "no-speech"
-    assert aligned.segments[1].start == pytest.approx(0.9)
-    assert aligned.segments[1].end == pytest.approx(1.2)
-    # The other two cues still align.
-    assert report.segments_aligned == 2
+    assert aligned.segments[1].start == pytest.approx(0.6)
+    assert aligned.segments[1].end == pytest.approx(1.4)
+    # The spoken cue starts at the window edge already, so it is
+    # unchanged — only the silent one is reported.
+    assert report.segments_unchanged == 1
+    assert report.segments_aligned == 0
 
 
 def test_align_clamps_large_shift():
@@ -92,7 +97,9 @@ def test_align_clamps_early_end():
 
 
 def test_align_unchanged_when_speech_at_window_edge():
-    audio = make_sine(440.0, 0.5, amplitude=0.3)
+    # The VAD needs some silence in the track to calibrate its noise
+    # floor, so the tone is followed by trailing silence.
+    audio = concat(make_sine(440.0, 0.5, amplitude=0.3), make_silence(0.5))
     transcript = Transcript(segments=[_seg("line starts now", 0.0, 0.5)])
     _aligned, report = align_transcript(audio, transcript)
     assert report.segments_unchanged == 1
@@ -147,9 +154,9 @@ def test_alignment_report_json_round_trip():
 
 def test_alignment_report_markdown():
     audio, transcript = _two_line_track()
-    transcript.segments.insert(1, _seg("silent pause", 0.9, 1.2))
+    transcript.segments.insert(1, _seg("silent pause", 1.0, 1.35))
     _aligned, report = align_transcript(audio, transcript)
     text = report.to_markdown()
     assert "Segments aligned: 2" in text
-    assert "no detected speech" in text
+    assert "no speech detected" in text
     assert "Mean |start shift|" in text
