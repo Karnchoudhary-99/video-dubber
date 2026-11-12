@@ -2783,3 +2783,111 @@ class TestCliStyles:
         )
         assert "patched segment 2" in capsys.readouterr().out
         assert load_wav(str(out)).duration == pytest.approx(load_wav(str(dub)).duration)
+
+
+def _make_verify_fixtures(tmp_path, audio_hz=(220.0, 110.0)):
+    """Labelled two-speaker dub + library; audio_hz picks the voice per segment."""
+    from video_dubber.transcript import Segment, Word
+    from video_dubber.voice import VoiceLibrary, clone_from_references
+
+    audio = tmp_path / "dub.wav"
+    save_wav(
+        str(audio),
+        concat(make_sine(audio_hz[0], 1.0), make_sine(audio_hz[1], 1.0)),
+    )
+    transcript = Transcript(
+        segments=[
+            Segment(
+                words=[Word("hello", 0.0, 0.5), Word("mars", 0.5, 1.0)],
+                speaker="Asha",
+            ),
+            Segment(
+                words=[Word("good", 1.0, 1.5), Word("morning", 1.5, 2.0)],
+                speaker="Ravi",
+            ),
+        ],
+        language="en",
+    )
+    transcript_path = tmp_path / "transcript.json"
+    transcript_path.write_text(transcript.to_json(), encoding="utf-8")
+    library = VoiceLibrary()
+    library.add(clone_from_references("Asha", [make_sine(220.0, 1.0)]))
+    library.add(clone_from_references("Ravi", [make_sine(110.0, 1.0)]))
+    library_path = tmp_path / "voices.json"
+    library.save(str(library_path))
+    return audio, transcript_path, library_path
+
+
+def test_cli_verify_passes_a_correct_dub(tmp_path, capsys):
+    audio, transcript_path, library_path = _make_verify_fixtures(tmp_path)
+    assert main(["verify", str(audio), str(transcript_path), str(library_path)]) == 0
+    assert "Verdict: **pass**" in capsys.readouterr().out
+
+
+def test_cli_verify_fails_a_wrong_voice_dub(tmp_path, capsys):
+    # First segment claims Asha but is 440 Hz: a mismatch, not a match.
+    audio, transcript_path, library_path = _make_verify_fixtures(tmp_path, (440.0, 110.0))
+    assert main(["verify", str(audio), str(transcript_path), str(library_path)]) == 1
+    stdout = capsys.readouterr().out
+    assert "Verdict: **review**" in stdout
+    assert "[mismatch]" in stdout
+
+
+def test_cli_verify_fail_on_uncertain(tmp_path, capsys):
+    # 330 Hz for Asha is uncertain: passes by default, fails with the flag.
+    audio, transcript_path, library_path = _make_verify_fixtures(tmp_path, (330.0, 110.0))
+    assert main(["verify", str(audio), str(transcript_path), str(library_path)]) == 0
+    assert (
+        main(
+            [
+                "verify",
+                str(audio),
+                str(transcript_path),
+                str(library_path),
+                "--fail-on-uncertain",
+            ]
+        )
+        == 1
+    )
+
+
+def test_cli_verify_json_and_report_out(tmp_path, capsys):
+    audio, transcript_path, library_path = _make_verify_fixtures(tmp_path)
+    report_path = tmp_path / "verify.json"
+    assert (
+        main(
+            [
+                "verify",
+                str(audio),
+                str(transcript_path),
+                str(library_path),
+                "--json",
+                "--report-out",
+                str(report_path),
+            ]
+        )
+        == 0
+    )
+    stdout = capsys.readouterr().out
+    assert '"verdict": "pass"' in stdout
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["verdict"] == "pass"
+    assert report["matches"] == 2
+
+
+def test_cli_verify_unknown_speaker_errors(tmp_path, capsys):
+    from video_dubber.transcript import Segment, Word
+
+    audio, transcript_path, library_path = _make_verify_fixtures(tmp_path)
+    bad = Transcript(
+        segments=[
+            Segment(
+                words=[Word("hello", 0.0, 0.5), Word("mars", 0.5, 1.0)],
+                speaker="Nobody",
+            )
+        ],
+        language="en",
+    )
+    transcript_path.write_text(bad.to_json(), encoding="utf-8")
+    assert main(["verify", str(audio), str(transcript_path), str(library_path)]) == 1
+    assert "no such profile" in capsys.readouterr().err
