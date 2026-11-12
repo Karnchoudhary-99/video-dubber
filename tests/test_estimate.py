@@ -312,3 +312,58 @@ def test_cli_estimate_errors_are_exit_1(tmp_path, capsys):
     # Cache dir without a profile.
     assert main(["estimate", str(transcript_path), "--cache-dir", str(tmp_path)]) == 1
     assert "speaker profile" in capsys.readouterr().err
+
+
+class TestEstimateStyle:
+    def test_energetic_predicts_shorter_than_dramatic(self):
+        plain = estimate_dub(_sample(), backend="scripted", target="hi")
+        fast = estimate_dub(_sample(), backend="scripted", target="hi", style="energetic")
+        slow = estimate_dub(_sample(), backend="scripted", target="hi", style="dramatic")
+        assert fast.predicted_speech_s < plain.predicted_speech_s < slow.predicted_speech_s
+        assert fast.words_per_minute == pytest.approx(150.0 * 1.15)
+        assert slow.words_per_minute == pytest.approx(150.0 * 0.85)
+
+    def test_style_is_recorded_and_round_trips(self):
+        est = estimate_dub(_sample(), backend="scripted", target="hi", style="narration")
+        assert est.style == "narration"
+        assert "Delivery style: narration" in est.to_markdown()
+        assert json.loads(est.to_json())["style"] == "narration"
+        assert DubEstimate.from_json(est.to_json()).style == "narration"
+
+    def test_plain_estimate_has_no_style(self):
+        est = estimate_dub(_sample(), backend="scripted", target="hi")
+        assert est.style is None
+        assert "Delivery style" not in est.to_markdown()
+
+    def test_unknown_style_raises(self):
+        from video_dubber.style import StyleError
+
+        with pytest.raises(StyleError, match="unknown dub style"):
+            estimate_dub(_sample(), backend="scripted", style="shouty")
+
+    def test_style_scales_cache_probe(self, tmp_path):
+        # The cache holds a segment synthesised in the energetic style;
+        # a plain estimate must not count it as a hit (different wpm
+        # and pitch mean different audio), the styled one must.
+        profile = _profile()
+        cloner = CachedVoiceCloner(ScriptedVoiceCloner(), SynthesisCache(str(tmp_path)))
+        from video_dubber.style import apply_style
+
+        styled = apply_style(profile, "energetic")
+        cloner.synthesize("hello world", styled)
+        transcript = _sample()
+        plain = estimate_dub(
+            transcript,
+            backend="scripted",
+            profile=profile,
+            cache=SynthesisCache(str(tmp_path)),
+        )
+        assert plain.cached_segments == 0
+        styled_est = estimate_dub(
+            transcript,
+            backend="scripted",
+            profile=profile,
+            cache=SynthesisCache(str(tmp_path)),
+            style="energetic",
+        )
+        assert styled_est.cached_segments == 1

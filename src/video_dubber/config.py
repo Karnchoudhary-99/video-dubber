@@ -10,6 +10,7 @@ loads those defaults from a TOML file so a project can pin them once:
    target_language = "hi"
    voice_library = "voices.json"
    bed_level = 0.3
+   style = "documentary"
 
    [dubber.enhance]
    target = -16.0
@@ -32,6 +33,7 @@ from video_dubber.enhance import (
     DEFAULT_HIGH_PASS_HZ,
     DEFAULT_TARGET_DBFS,
 )
+from video_dubber.style import StyleError, get_style
 
 __all__ = [
     "ConfigError",
@@ -76,6 +78,7 @@ class DubberConfig:
     backend: str = "dictionary"
     voice_library: str | None = None
     bed_level: float | None = None
+    style: str | None = None  # default delivery style for dub/dub-multi/patch
     enhance: EnhanceConfig = field(default_factory=EnhanceConfig)
     path: Path | None = None
 
@@ -86,6 +89,7 @@ class DubberConfig:
             "backend": self.backend,
             "voice_library": self.voice_library,
             "bed_level": self.bed_level,
+            "style": self.style,
             "enhance": self.enhance.to_dict(),
             "path": str(self.path) if self.path else None,
         }
@@ -129,6 +133,7 @@ def _parse_dubber(table: dict) -> DubberConfig:
         "backend",
         "voice_library",
         "bed_level",
+        "style",
         "enhance",
     }
     unknown = sorted(set(table) - known)
@@ -149,6 +154,12 @@ def _parse_dubber(table: dict) -> DubberConfig:
         config.bed_level = _require_number(table, "bed_level")
         if not 0.0 <= config.bed_level <= 1.0:
             raise ConfigError(f"bed_level must be between 0 and 1, got {config.bed_level}")
+    if "style" in table:
+        config.style = _require_str(table, "style")
+        try:
+            get_style(config.style)
+        except StyleError as exc:
+            raise ConfigError(f"invalid style in config file: {exc}") from exc
     if "enhance" in table:
         config.enhance = _parse_enhance(table["enhance"])
     return config

@@ -270,3 +270,21 @@ class TestDubMultiCli:
             )
             == 2
         )
+
+
+class TestDubMultiStyle:
+    def test_style_is_recorded_in_every_target_report(self, tmp_path):
+        summary = _run(tmp_path, style="energetic")
+        assert summary.succeeded == 2
+        for result in summary.results:
+            assert result.report.style == "energetic"
+            report_path = tmp_path / "out" / f"dub.{result.target}.report.json"
+            assert json.loads(report_path.read_text(encoding="utf-8"))["style"] == "energetic"
+
+    def test_unknown_style_fails_every_target(self, tmp_path):
+        # dub_all_targets records per-target failures instead of
+        # raising: an unknown style fails both targets, succeeds none.
+        summary = _run(tmp_path, style="shouty")
+        assert summary.succeeded == 0
+        assert set(summary.failures) == {"hi", "es"}
+        assert "unknown dub style" in summary.failures["hi"]

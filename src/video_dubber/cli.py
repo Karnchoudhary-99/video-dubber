@@ -96,6 +96,7 @@ from video_dubber.preflight import run_preflight
 from video_dubber.render import RenderError, SubtitleStyle, render_preview, render_video
 from video_dubber.report import render_html_report
 from video_dubber.split import SplitConfig, SplitError, split_transcript
+from video_dubber.style import StyleError, get_style, list_styles
 from video_dubber.subtitles import retime_transcript, to_ass
 from video_dubber.transcribe import (
     ScriptedTranscriber,
@@ -249,6 +250,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Replace an existing profile of the same name when using --add.",
     )
 
+    p_styles = sub.add_parser("styles", help="List the dubbing style presets.")
+    p_styles.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format (default text).",
+    )
+
     p_synth = sub.add_parser("synthesize", help="Render text in a cloned voice.")
     p_synth.add_argument("text", help="Text to speak.")
     p_synth.add_argument("--profile", required=True, help="Speaker profile JSON path.")
@@ -332,6 +341,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Keep the original's music bed under the dub at this mix level "
         "(0-1; needs --original).",
+    )
+    p_dub.add_argument(
+        "--style",
+        default=None,
+        help="Delivery style for the dub (documentary, conversational, "
+        "energetic, narration, dramatic; default: style from dubber.toml, "
+        "else the plain voice).",
     )
     p_dub.add_argument("--out", required=True, help="Output dubbed WAV path.")
     p_dub.add_argument("--video", help="Original video to mux the dub into.")
@@ -431,6 +447,12 @@ def build_parser() -> argparse.ArgumentParser:
         "(0-1; needs --original).",
     )
     p_dub_multi.add_argument(
+        "--style",
+        default=None,
+        help="Delivery style for every target (default: style from dubber.toml, "
+        "else the plain voice).",
+    )
+    p_dub_multi.add_argument(
         "--enhance",
         action="store_true",
         help="Enhance each finished dub track (hum cut, noise gate, loudness "
@@ -473,6 +495,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_patch.add_argument("--text", required=True, help="Replacement text for the segment.")
     p_patch.add_argument("--original", help="Original audio WAV (for loudness matching).")
+    p_patch.add_argument(
+        "--style",
+        default=None,
+        help="Delivery style for the replacement line (default: style from "
+        "dubber.toml, else the plain voice) — use the same style the dub "
+        "was made in, so the patch does not sound like a different take.",
+    )
     p_patch.add_argument(
         "--cache-dir",
         help="Cache the re-rendered segment here so patching the same text "
@@ -697,6 +726,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="Speaking rate in words per minute (default: the profile's rate, else 150).",
+    )
+    p_estimate.add_argument(
+        "--style",
+        default=None,
+        help="Delivery style to estimate for (default: the plain voice) — "
+        "an energetic estimate is shorter than a dramatic one.",
     )
     p_estimate.add_argument(
         "--rtf",
@@ -938,6 +973,19 @@ def _load_config(args: argparse.Namespace) -> DubberConfig | None:
         return None
 
 
+def _resolve_style(args: argparse.Namespace, config: DubberConfig) -> str | None:
+    """Effective delivery style: --style wins over dubber.toml.
+
+    Returns the canonical style name, or None for the plain voice.
+    Raises :class:`StyleError` for an unknown name — the caller turns
+    that into exit 2, so a typo never silently dubs in the default.
+    """
+    name = getattr(args, "style", None) or config.style
+    if name is None:
+        return None
+    return get_style(name).name
+
+
 def _cmd_config(args: argparse.Namespace) -> int:
     config = _load_config(args)
     if config is None:
@@ -966,6 +1014,8 @@ def _config_to_toml(config: DubberConfig) -> str:
             lines.append(f"{key} = {json.dumps(value)}")
     if config.bed_level is not None:
         lines.append(f"bed_level = {config.bed_level}")
+    if config.style is not None:
+        lines.append(f"style = {json.dumps(config.style)}")
     lines.append("")
     lines.append("[dubber.enhance]")
     for key in ("target", "ceiling", "high_pass", "gate"):
@@ -1186,6 +1236,22 @@ def _cmd_voices(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_styles(args: argparse.Namespace) -> int:
+    styles = list_styles()
+    if args.format == "json":
+        import json
+
+        print(json.dumps([style.to_dict() for style in styles], indent=2))
+        return 0
+    print(f"{len(styles)} dubbing style(s)")
+    for style in styles:
+        print(
+            f"  {style.name}: {style.rate_factor:.2f}x rate, "
+            f"{style.pitch_semitones:+.0f} semitones — {style.description}"
+        )
+    return 0
+
+
 def _cmd_diarize(args: argparse.Namespace) -> int:
     config = _load_config(args)
     if config is None:
@@ -1334,6 +1400,11 @@ def _cmd_dub(args: argparse.Namespace) -> int:
     if bed_level is not None and not 0.0 <= bed_level <= 1.0:
         print("error: --bed-level must be between 0 and 1", file=sys.stderr)
         return 2
+    try:
+        style = _resolve_style(args, config)
+    except StyleError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     with open(args.transcript, encoding="utf-8") as fh:
         transcript = Transcript.from_json(fh.read())
     with open(args.profile, encoding="utf-8") as fh:
@@ -1374,6 +1445,7 @@ def _cmd_dub(args: argparse.Namespace) -> int:
         original,
         profiles=profiles,
         bed_level=bed_level,
+        style=style,
     )
     enhancement = None
     if args.enhance:
@@ -1407,8 +1479,11 @@ def _cmd_dub(args: argparse.Namespace) -> int:
         reference_transcript=reference,
         bed_level=bed_level,
         enhancement=enhancement,
+        style=style,
     )
     print(f"dubbed {report.segments_dubbed} segments, {dub_audio.duration:.2f}s -> {args.out}")
+    if report.style is not None:
+        print(f"delivery style: {report.style}")
     summary = _cache_summary(cloner)
     if summary is not None:
         print(summary)
@@ -1488,6 +1563,11 @@ def _cmd_dub_multi(args: argparse.Namespace) -> int:
         print("error: --bed-level must be between 0 and 1", file=sys.stderr)
         return 2
     try:
+        style = _resolve_style(args, config)
+    except StyleError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    try:
         targets = parse_targets(args.targets)
     except MultiTargetError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -1524,6 +1604,7 @@ def _cmd_dub_multi(args: argparse.Namespace) -> int:
         enhance=args.enhance,
         subtitles=not args.no_subtitles,
         stop_on_error=args.stop_on_error,
+        style=style,
     )
     summary_path = os.path.join(args.out_dir, f"{args.stem}.multilang.json")
     with open(summary_path, "w", encoding="utf-8") as fh:
@@ -1547,6 +1628,14 @@ def _cmd_dub_multi(args: argparse.Namespace) -> int:
 
 
 def _cmd_patch(args: argparse.Namespace) -> int:
+    config = _load_config(args)
+    if config is None:
+        return 2
+    try:
+        style = _resolve_style(args, config)
+    except StyleError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     with open(args.transcript, encoding="utf-8") as fh:
         transcript = Transcript.from_json(fh.read())
     with open(args.profile, encoding="utf-8") as fh:
@@ -1581,6 +1670,7 @@ def _cmd_patch(args: argparse.Namespace) -> int:
         original,
         profiles=profiles,
         placed=placed,
+        style=style,
     )
     segment = [s for s in patched_transcript.segments if s.words][args.segment - 1]
     drift = abs((segment.start + placed_duration) - segment.end)
@@ -1884,6 +1974,14 @@ def _cmd_compare(args: argparse.Namespace) -> int:
 
 
 def _cmd_estimate(args: argparse.Namespace) -> int:
+    config = _load_config(args)
+    if config is None:
+        return 2
+    try:
+        style = _resolve_style(args, config)
+    except StyleError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     with open(args.transcript, encoding="utf-8") as fh:
         transcript = Transcript.from_json(fh.read())
     profile = None
@@ -1905,6 +2003,7 @@ def _cmd_estimate(args: argparse.Namespace) -> int:
         currency=args.currency,
         cache=cache,
         profile=profile,
+        style=style,
     )
     text = estimate.to_json() if args.format == "json" else estimate.to_markdown()
     if args.out:
@@ -2054,6 +2153,8 @@ def main(argv=None) -> int:
             return _cmd_clone(args)
         if args.command == "voices":
             return _cmd_voices(args)
+        if args.command == "styles":
+            return _cmd_styles(args)
         if args.command == "diarize":
             return _cmd_diarize(args)
         if args.command == "synthesize":

@@ -33,6 +33,7 @@ import json
 from dataclasses import dataclass, field
 
 from video_dubber.cache import SynthesisCache, cache_key
+from video_dubber.style import DubStyle, apply_style, get_style
 from video_dubber.transcript import Transcript
 from video_dubber.voice import SpeakerProfile
 
@@ -155,6 +156,8 @@ class DubEstimate:
     # True when the duration model is exact (scripted backend); other
     # backends pace words differently, so their numbers are approximate.
     duration_exact: bool = False
+    # Delivery style the estimate is for (None = the default voice).
+    style: str | None = None
 
     @property
     def segments(self) -> int:
@@ -230,6 +233,7 @@ class DubEstimate:
             "words_per_minute": self.words_per_minute,
             "real_time_factor": self.real_time_factor,
             "duration_exact": self.duration_exact,
+            "style": self.style,
             "segments": self.segments,
             "source_duration_s": round(self.source_duration_s, 3),
             "total_words": self.total_words,
@@ -264,6 +268,7 @@ class DubEstimate:
             price_per_minute=data.get("price_per_minute"),
             currency=data.get("currency", "USD"),
             duration_exact=bool(data.get("duration_exact", False)),
+            style=data.get("style"),
         )
 
     @classmethod
@@ -283,6 +288,8 @@ class DubEstimate:
         if self.target:
             lines.append(f"- Target language: `{self.target}`")
         lines.append(f"- Speaking rate: {self.words_per_minute:.0f} wpm")
+        if self.style is not None:
+            lines.append(f"- Delivery style: {self.style}")
         lines.append(f"- Segments: {self.segments} over {self.source_duration_s:.2f}s of source")
         lines.append(f"- Words: {self.total_words} ({self.total_chars} chars)")
         lines.append(
@@ -328,6 +335,7 @@ def estimate_dub(
     cache: SynthesisCache | None = None,
     profile: SpeakerProfile | None = None,
     cloner_name: str | None = None,
+    style: DubStyle | str | None = None,
 ) -> DubEstimate:
     """Estimate dubbing ``transcript`` (already translated) with ``backend``.
 
@@ -336,11 +344,24 @@ def estimate_dub(
     in :data:`BACKEND_RTF`. Pass ``cache`` + ``profile`` to count
     cache hits — the probe reads the cache index only, never the audio,
     so estimating never bumps hit counts or rewrites the index.
+
+    With ``style`` (a :class:`~video_dubber.style.DubStyle` or its
+    name), the rate is scaled by the style's rate factor and cache
+    probes use the styled profile, so the estimate matches a dub made
+    in that style — an energetic estimate is shorter than a dramatic
+    one for the same words.
     """
     if not transcript.segments:
         raise EstimateError("cannot estimate an empty transcript")
     if words_per_minute <= 0:
         raise EstimateError(f"words_per_minute must be positive, got {words_per_minute}")
+    resolved_style = get_style(style) if isinstance(style, str) else style
+    effective_wpm = words_per_minute
+    effective_profile = profile
+    if resolved_style is not None:
+        effective_wpm = words_per_minute * resolved_style.rate_factor
+        if profile is not None:
+            effective_profile = apply_style(profile, resolved_style)
     if price_per_char is not None and price_per_minute is not None:
         raise EstimateError("pass at most one of price_per_char / price_per_minute")
     if price_per_char is not None and price_per_char < 0:
@@ -363,12 +384,12 @@ def estimate_dub(
     rows: list[EstimateRow] = []
     for index, segment in enumerate(transcript.segments, start=1):
         text = segment.text
-        predicted = predict_speech_duration(text, words_per_minute)
+        predicted = predict_speech_duration(text, effective_wpm)
         window = segment.duration
         fit = predicted / window if window > 0 else 0.0
         cached = False
-        if cache is not None and profile is not None:
-            key = cache_key(key_cloner, text, profile, words_per_minute)
+        if cache is not None and effective_profile is not None:
+            key = cache_key(key_cloner, text, effective_profile, effective_wpm)
             cached = cache.contains(key)
         rows.append(
             EstimateRow(
@@ -387,11 +408,12 @@ def estimate_dub(
     return DubEstimate(
         backend=backend,
         target=target,
-        words_per_minute=words_per_minute,
+        words_per_minute=effective_wpm,
         real_time_factor=real_time_factor,
         rows=rows,
         price_per_char=price_per_char,
         price_per_minute=price_per_minute,
         currency=currency,
         duration_exact=(backend == "scripted"),
+        style=resolved_style.name if resolved_style is not None else None,
     )
