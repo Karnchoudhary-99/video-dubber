@@ -38,6 +38,7 @@ keeping the speaker's voice.
 - [x] Pronunciation lexicon (names/acronyms spoken as the lexicon says, `dub --lexicon`, `dubber lexicon`)
 - [x] Subtitle alignment (shift cues to the speech in the rendered dub, `dubber align`, `--max-shift` clamp)
 - [x] Subtitle QA (readability checks: reading speed, line width, cue length, overlaps, gaps, `dubber qa`)
+- [x] Voice-consistency verification (per-segment embedding similarity vs the claimed speaker, match/uncertain/mismatch, `dubber verify`, `dub --verify`)
 
 ## Quick start
 
@@ -1241,6 +1242,22 @@ everything else as warnings, with a pass/review verdict and a
 JSON/Markdown report. `dubber qa` exits 1 on errors (and on warnings
 with `--fail-on-warn`), so it can gate a mux in CI; the demo's
 five-cue transcript honestly reports 1 error and 5 warnings.
+Voice-consistency verification is done (777 tests): `verify.py`
+slices each labelled segment out of the finished dub and grades its
+spectral embedding against the claimed speaker's profile — match
+(>= 0.90), uncertain (0.80–0.90), mismatch (< 0.80) — with a
+near-twin rule that drops a segment to uncertain when another voice
+beats its claimed one by more than 0.03 (calibration caught a 165 Hz
+tone reading 0.92 for Asha but 0.97 for Ravi); mismatches name the
+voice the segment actually sounds like. `VerifyReport` aggregates
+counts, mean/worst similarity, a pass/review verdict and
+per-speaker breakdowns as JSON/Markdown; `dubber verify` takes the
+library from the command line or `voice_library` in `dubber.toml`,
+exits 1 on mismatches (and on uncertain checks with
+`--fail-on-uncertain`), and `dub --verify` runs the same check right
+after assembly. The demo's correct dub passes and the swapped dub
+flips to `review` with both segments uncertain, each naming the
+voice it actually sounds like.
 Remaining: the self-review
 checklist and public flip — the
 project stays private per the 5–7 day pace rule (started 2026-11-08,
