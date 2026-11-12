@@ -433,6 +433,23 @@ def build_parser() -> argparse.ArgumentParser:
         "normalize to -16 dBFS); timing is preserved, no trimming.",
     )
     p_dub.add_argument(
+        "--verify",
+        action="store_true",
+        help="Check the finished dub sounds like the speaker each segment "
+        "claims (voice-consistency verification) and exit 1 on mismatches; "
+        "the dub file is still written.",
+    )
+    p_dub.add_argument(
+        "--verify-library",
+        default=None,
+        help="Voice library JSON for --verify (or voice_library in dubber.toml).",
+    )
+    p_dub.add_argument(
+        "--verify-fail-on-uncertain",
+        action="store_true",
+        help="With --verify, exit 1 on uncertain checks too, not just mismatches.",
+    )
+    p_dub.add_argument(
         "--level",
         action="store_true",
         help="Even out per-segment loudness on the finished dub track "
@@ -1656,6 +1673,12 @@ def _cmd_dub(args: argparse.Namespace) -> int:
     if (args.level_target is not None or args.level_max_gain is not None) and not args.level:
         print("error: --level-target/--level-max-gain need --level", file=sys.stderr)
         return 2
+    if args.verify and not (args.verify_library or config.voice_library):
+        print(
+            "error: --verify needs --verify-library or voice_library in dubber.toml",
+            file=sys.stderr,
+        )
+        return 2
     original = resample(original, DEFAULT_SAMPLE_RATE) if original is not None else None
     reference = None
     if args.reference:
@@ -1735,6 +1758,14 @@ def _cmd_dub(args: argparse.Namespace) -> int:
     )
     if report.word_error_rate is not None:
         print(f"word error rate vs reference: {report.word_error_rate:.3f}")
+    verify_failed = False
+    if args.verify:
+        verify_library = VoiceLibrary.from_json_file(args.verify_library or config.voice_library)
+        verify_report = build_verify_report(verify_dub(dub_audio, transcript, verify_library))
+        print(verify_report.to_markdown(), end="")
+        verify_failed = verify_report.mismatches > 0 or (
+            args.verify_fail_on_uncertain and verify_report.uncertain > 0
+        )
     if report.bed_level is not None:
         print(f"background bed level: {report.bed_level:.2f}")
     if enhancement is not None:
@@ -1789,7 +1820,7 @@ def _cmd_dub(args: argparse.Namespace) -> int:
         else:
             mux_audio(args.video, args.out, args.mux_out)
             print(f"muxed dub into {args.mux_out}")
-    return 0
+    return 1 if verify_failed else 0
 
 
 def _cmd_dub_multi(args: argparse.Namespace) -> int:
