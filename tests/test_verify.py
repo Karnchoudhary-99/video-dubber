@@ -199,6 +199,20 @@ class TestVerifyReport:
         # Ravi's only segment is silent, so he has no scored entry.
         assert "Ravi" not in report.per_speaker
 
+    def test_all_skipped_report_still_passes(self):
+        # Every segment silent: nothing scored, so nothing can fail —
+        # but the report must say so honestly instead of claiming a
+        # similarity it never measured.
+        audio = make_silence(2.0)
+        report = build_verify_report(verify_dub(audio, _transcript(["Asha", "Ravi"]), _library()))
+        assert report.verdict == "pass"
+        assert report.segments_checked == 0
+        assert report.segments_skipped == 2
+        assert report.mean_similarity is None
+        assert report.worst_index is None
+        assert report.per_speaker == {}
+        assert "n/a (no scored segments)" in report.to_markdown()
+
     def test_clean_report_passes(self):
         audio = concat(make_sine(220.0, 1.0), make_sine(110.0, 1.0))
         report = build_verify_report(verify_dub(audio, _transcript(["Asha", "Ravi"]), _library()))
@@ -232,6 +246,28 @@ class TestVerifyReport:
         check = self._mixed_checks()[0]
         restored = SegmentVoiceCheck.from_dict(check.to_dict())
         assert restored == check
+
+
+class TestDemo:
+    def test_demo_verify_runs_end_to_end(self):
+        """The example script is a runnable contract, not just docs."""
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1]
+        run = subprocess.run(
+            [sys.executable, str(root / "examples" / "demo_verify.py")],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        assert run.returncode == 0, run.stderr
+        assert "Verdict: **pass**" in run.stdout
+        assert "Verdict: **review**" in run.stdout
+        assert "closer to Ravi" in run.stdout
+        assert "demo ok" in run.stdout
 
 
 class TestValidation:

@@ -663,14 +663,14 @@ def _write_dub_transcript(path):
     )
 
 
-def _write_dub_profile(path):
+def _write_dub_profile(path, pitch: float = 180.0):
     from video_dubber.voice import EMBEDDING_DIM, SpeakerProfile
 
     path.write_text(
         SpeakerProfile(
             name="Dub",
             embedding=[0.25] * EMBEDDING_DIM,
-            base_pitch_hz=180.0,
+            base_pitch_hz=pitch,
         ).to_json()
     )
 
@@ -2873,6 +2873,129 @@ def test_cli_verify_json_and_report_out(tmp_path, capsys):
     report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["verdict"] == "pass"
     assert report["matches"] == 2
+
+
+def test_cli_verify_library_from_config(tmp_path, capsys):
+    audio, transcript_path, library_path = _make_verify_fixtures(tmp_path)
+    config_path = tmp_path / "dubber.toml"
+    config_path.write_text(f'[dubber]\nvoice_library = "{library_path}"\n', encoding="utf-8")
+    assert main(["--config", str(config_path), "verify", str(audio), str(transcript_path)]) == 0
+    assert "Verdict: **pass**" in capsys.readouterr().out
+
+
+def test_cli_verify_no_library_anywhere_errors(tmp_path, capsys):
+    audio, transcript_path, _library_path = _make_verify_fixtures(tmp_path)
+    assert main(["verify", str(audio), str(transcript_path)]) == 2
+    assert "needs a library path" in capsys.readouterr().err
+
+
+def _write_labelled_dub_transcript(path):
+    path.write_text(
+        Transcript(
+            segments=[
+                {
+                    "words": [
+                        {"text": "नमस्ते", "start": 0.0, "end": 0.5},
+                        {"text": "दुनिया", "start": 0.5, "end": 1.0},
+                    ],
+                    "speaker": "Dub",
+                },
+                {
+                    "words": [{"text": "शानदार", "start": 2.0, "end": 2.5}],
+                    "speaker": "Dub",
+                },
+            ],
+            language="hi",
+        ).to_json()
+    )
+
+
+def test_cli_dub_verify_passes_a_matching_voice(tmp_path, capsys):
+    from video_dubber.voice import VoiceLibrary, clone_from_references
+
+    transcript = tmp_path / "hi.json"
+    _write_labelled_dub_transcript(transcript)
+    profile = tmp_path / "dub.json"
+    _write_dub_profile(profile)
+    library = VoiceLibrary()
+    library.add(clone_from_references("Dub", [make_sine(180.0, 1.0)]))
+    library_path = tmp_path / "voices.json"
+    library.save(str(library_path))
+    out = tmp_path / "dub.wav"
+    assert (
+        main(
+            [
+                "dub",
+                str(transcript),
+                "--profile",
+                str(profile),
+                "--out",
+                str(out),
+                "--verify",
+                "--verify-library",
+                str(library_path),
+            ]
+        )
+        == 0
+    )
+    assert "Verdict: **pass**" in capsys.readouterr().out
+    assert out.exists()
+
+
+def test_cli_dub_verify_fails_a_wrong_voice(tmp_path, capsys):
+    from video_dubber.voice import VoiceLibrary, clone_from_references
+
+    transcript = tmp_path / "hi.json"
+    _write_labelled_dub_transcript(transcript)
+    profile = tmp_path / "dub.json"
+    # The dub renders at 440 Hz, but the library says Dub sounds like 180 Hz.
+    _write_dub_profile(profile, pitch=440.0)
+    library = VoiceLibrary()
+    library.add(clone_from_references("Dub", [make_sine(180.0, 1.0)]))
+    library_path = tmp_path / "voices.json"
+    library.save(str(library_path))
+    out = tmp_path / "dub.wav"
+    assert (
+        main(
+            [
+                "dub",
+                str(transcript),
+                "--profile",
+                str(profile),
+                "--out",
+                str(out),
+                "--verify",
+                "--verify-library",
+                str(library_path),
+            ]
+        )
+        == 1
+    )
+    stdout = capsys.readouterr().out
+    assert "Verdict: **review**" in stdout
+    # The dub is still written: verification gates, it does not delete.
+    assert out.exists()
+
+
+def test_cli_dub_verify_without_library_errors(tmp_path):
+    transcript = tmp_path / "hi.json"
+    _write_labelled_dub_transcript(transcript)
+    profile = tmp_path / "dub.json"
+    _write_dub_profile(profile)
+    assert (
+        main(
+            [
+                "dub",
+                str(transcript),
+                "--profile",
+                str(profile),
+                "--out",
+                str(tmp_path / "dub.wav"),
+                "--verify",
+            ]
+        )
+        == 2
+    )
 
 
 def test_cli_verify_unknown_speaker_errors(tmp_path, capsys):
