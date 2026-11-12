@@ -1,5 +1,7 @@
 """Tests for subtitle alignment (align.align_transcript)."""
 
+import json
+
 import pytest
 
 from video_dubber.align import (
@@ -8,7 +10,8 @@ from video_dubber.align import (
     AlignmentReport,
     align_transcript,
 )
-from video_dubber.audio import concat, make_silence, make_sine
+from video_dubber.audio import concat, make_silence, make_sine, save_wav
+from video_dubber.cli import main
 from video_dubber.transcript import Segment, Transcript, Word
 
 
@@ -160,3 +163,77 @@ def test_alignment_report_markdown():
     assert "Segments aligned: 2" in text
     assert "no speech detected" in text
     assert "Mean |start shift|" in text
+
+
+def _write_align_files(tmp_path):
+    """Two-line dub WAV + planned transcript JSON; returns (wav, transcript)."""
+    audio, transcript = _two_line_track()
+    wav = tmp_path / "dub.wav"
+    save_wav(str(wav), audio)
+    path = tmp_path / "planned.json"
+    path.write_text(transcript.to_json(), encoding="utf-8")
+    return wav, path
+
+
+def test_cli_align_json(tmp_path, capsys):
+    wav, planned = _write_align_files(tmp_path)
+    out = tmp_path / "aligned.json"
+    report = tmp_path / "align.md"
+    assert (
+        main(
+            [
+                "align",
+                str(wav),
+                str(planned),
+                "--out",
+                str(out),
+                "--report-out",
+                str(report),
+            ]
+        )
+        == 0
+    )
+    aligned = Transcript.from_json(out.read_text(encoding="utf-8"))
+    assert aligned.segments[0].start == pytest.approx(0.24, abs=0.01)
+    assert aligned.segments[1].start == pytest.approx(1.44, abs=0.01)
+    text = report.read_text(encoding="utf-8")
+    assert "Segments aligned: 2" in text
+    assert "wrote" in capsys.readouterr().out
+
+
+def test_cli_align_srt(tmp_path):
+    wav, planned = _write_align_files(tmp_path)
+    out = tmp_path / "aligned.srt"
+    assert main(["align", str(wav), str(planned), "--out", str(out), "--format", "srt"]) == 0
+    assert "00:00:00,240 --> 00:00:00,900" in out.read_text(encoding="utf-8")
+
+
+def test_cli_align_json_report(tmp_path):
+    wav, planned = _write_align_files(tmp_path)
+    out = tmp_path / "aligned.json"
+    report = tmp_path / "align.json"
+    assert (
+        main(
+            [
+                "align",
+                str(wav),
+                str(planned),
+                "--out",
+                str(out),
+                "--json",
+                "--report-out",
+                str(report),
+            ]
+        )
+        == 0
+    )
+    data = json.loads(report.read_text(encoding="utf-8"))
+    assert data["segments_aligned"] == 2
+    assert data["max_shift_s"] == 1.0
+
+
+def test_cli_align_bad_max_shift_is_a_clean_error(tmp_path, capsys):
+    wav, planned = _write_align_files(tmp_path)
+    out = tmp_path / "aligned.json"
+    assert main(["align", str(wav), str(planned), "--out", str(out), "--max-shift", "-1"]) == 1
+    assert "max_shift_s" in capsys.readouterr().err

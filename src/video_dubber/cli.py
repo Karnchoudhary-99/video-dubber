@@ -31,6 +31,9 @@ Subcommands (see ``video-dubber <cmd> --help`` for details):
   normalize loudness to a target RMS.
 * ``level`` — even out per-segment loudness in a dubbed WAV, so no
   line is whispered or shouted next to the others (timing untouched).
+* ``align`` — shift subtitle cues to the speech actually in the
+  rendered dub audio, so no cue sits over leading silence or lingers
+  after the voice stops.
 * ``estimate`` — predict a dub before running it: speech durations, fit
   factors, wall time, cache savings and cost, from a translated transcript.
 * ``batch`` — dub many videos/transcripts from one manifest JSON file.
@@ -44,6 +47,7 @@ import sys
 from pathlib import Path
 
 from video_dubber import __version__, level
+from video_dubber.align import AlignConfig, AlignError, align_transcript
 from video_dubber.assemble import (
     AssemblyError,
     DubReport,
@@ -648,6 +652,34 @@ def build_parser() -> argparse.ArgumentParser:
     p_level.add_argument(
         "--report-out",
         help="Write the levelling report (Markdown, or JSON with --json) here.",
+    )
+
+    p_align = sub.add_parser("align", help="Shift subtitle cues to the speech in a dubbed WAV.")
+    p_align.add_argument("input", help="Input WAV file (a dubbed track).")
+    p_align.add_argument("transcript", help="Transcript JSON file with the planned cues.")
+    p_align.add_argument("--out", required=True, help="Output aligned transcript path.")
+    p_align.add_argument(
+        "--format",
+        choices=["json", "srt", "vtt"],
+        default="json",
+        help="Output format (default json).",
+    )
+    p_align.add_argument(
+        "--max-shift",
+        type=float,
+        default=None,
+        help=f"Furthest a cue may move from planned, in seconds (default {AlignConfig().max_shift_s}).",
+    )
+    p_align.add_argument(
+        "--min-cue",
+        type=float,
+        default=None,
+        help=f"Shortest readable cue, in seconds (default {AlignConfig().min_cue_s}).",
+    )
+    p_align.add_argument("--json", action="store_true", help="Print the report as JSON.")
+    p_align.add_argument(
+        "--report-out",
+        help="Write the alignment report (Markdown, or JSON with --json) here.",
     )
 
     p_preflight = sub.add_parser(
@@ -1916,6 +1948,33 @@ def _cmd_level(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_align(args: argparse.Namespace) -> int:
+    with open(args.transcript, encoding="utf-8") as fh:
+        transcript = Transcript.from_json(fh.read())
+    audio = load_wav(args.input)
+    config = AlignConfig(
+        max_shift_s=args.max_shift if args.max_shift is not None else AlignConfig().max_shift_s,
+        min_cue_s=args.min_cue if args.min_cue is not None else AlignConfig().min_cue_s,
+    )
+    aligned, report = align_transcript(audio, transcript, config)
+    if args.format == "srt":
+        rendered = aligned.to_srt()
+    elif args.format == "vtt":
+        rendered = aligned.to_vtt()
+    else:
+        rendered = aligned.to_json()
+    with open(args.out, "w", encoding="utf-8") as fh:
+        fh.write(rendered)
+    text = report.to_json() if args.json else report.to_markdown()
+    print(text, end="" if text.endswith("\n") else "\n")
+    print(f"wrote {args.out} ({len(report.rows)} segments)")
+    if args.report_out:
+        with open(args.report_out, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        print(f"wrote {args.report_out}")
+    return 0
+
+
 def _cmd_split(args: argparse.Namespace) -> int:
     with open(args.transcript, encoding="utf-8") as fh:
         transcript = Transcript.from_json(fh.read())
@@ -2290,6 +2349,8 @@ def main(argv=None) -> int:
             return _cmd_enhance(args)
         if args.command == "level":
             return _cmd_level(args)
+        if args.command == "align":
+            return _cmd_align(args)
         if args.command == "preflight":
             return _cmd_preflight(args)
         if args.command == "doctor":
@@ -2313,6 +2374,7 @@ def main(argv=None) -> int:
         if args.command == "config":
             return _cmd_config(args)
     except (
+        AlignError,
         AssemblyError,
         BatchError,
         CacheError,
