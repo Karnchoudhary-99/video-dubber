@@ -62,3 +62,13 @@ class TestScoringBands:
         assert checks[0].verdict == "uncertain"
         assert checks[0].best_match == "Ravi"
         assert "closer to Ravi" in checks[0].detail
+
+    def test_wrong_voice_is_a_mismatch_naming_the_real_voice(self):
+        # 440 Hz claimed as Asha: 0.77 from her, 0.99 from Ravi — the
+        # segment was routed to the wrong voice, and the check says so.
+        audio = make_sine(440.0, 1.0)
+        checks = verify_dub(audio, _transcript(["Asha"]), _library())
+        assert checks[0].verdict == "mismatch"
+        assert checks[0].best_match == "Ravi"
+        assert "sounds like Ravi" in checks[0].detail
+        assert "not Asha" in checks[0].detail
