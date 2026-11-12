@@ -747,7 +747,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_verify.add_argument("audio", help="Dubbed WAV file to check.")
     p_verify.add_argument("transcript", help="Transcript JSON file with speaker labels.")
-    p_verify.add_argument("library", help="Voice library JSON file with the speaker profiles.")
+    p_verify.add_argument(
+        "library",
+        nargs="?",
+        default=None,
+        help="Voice library JSON file with the speaker profiles (or voice_library in dubber.toml).",
+    )
     p_verify.add_argument(
         "--match",
         type=float,
@@ -2095,10 +2100,20 @@ def _cmd_qa(args: argparse.Namespace) -> int:
 
 
 def _cmd_verify(args: argparse.Namespace) -> int:
+    dubber_config = _load_config(args)
+    if dubber_config is None:
+        return 2
+    library_path = args.library or dubber_config.voice_library
+    if not library_path:
+        print(
+            "error: verify needs a library path or voice_library in dubber.toml",
+            file=sys.stderr,
+        )
+        return 2
     audio = load_wav(args.audio)
     with open(args.transcript, encoding="utf-8") as fh:
         transcript = Transcript.from_json(fh.read())
-    library = VoiceLibrary.from_json_file(args.library)
+    library = VoiceLibrary.from_json_file(library_path)
     defaults = VerifyConfig()
     config = VerifyConfig(
         match_threshold=args.match if args.match is not None else defaults.match_threshold,
