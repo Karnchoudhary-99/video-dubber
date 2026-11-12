@@ -56,3 +56,4 @@ jobs:
       - run: python examples/demo_doctor.py
       - run: python examples/demo_level.py
       - run: python examples/demo_style.py
+      - run: python examples/demo_lexicon.py
