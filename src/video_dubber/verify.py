@@ -37,7 +37,8 @@ beats silently passing every segment.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
 
 from video_dubber.audio import AudioData
 from video_dubber.transcript import Transcript
@@ -50,6 +51,8 @@ __all__ = [
     "SegmentVoiceCheck",
     "VerifyConfig",
     "VerifyError",
+    "VerifyReport",
+    "build_verify_report",
     "verify_dub",
 ]
 
@@ -93,6 +96,41 @@ class SegmentVoiceCheck:
     best_similarity: float | None
     verdict: str
     detail: str
+
+    def to_dict(self) -> dict:
+        return {
+            "index": self.index,
+            "speaker": self.speaker,
+            "start": round(self.start, 3),
+            "end": round(self.end, 3),
+            "similarity": round(self.similarity, 4) if self.similarity is not None else None,
+            "best_match": self.best_match,
+            "best_similarity": (
+                round(self.best_similarity, 4) if self.best_similarity is not None else None
+            ),
+            "verdict": self.verdict,
+            "detail": self.detail,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> SegmentVoiceCheck:
+        """Rebuild from :meth:`to_dict` output."""
+        try:
+            return cls(
+                index=int(data["index"]),
+                speaker=data["speaker"],
+                start=float(data["start"]),
+                end=float(data["end"]),
+                similarity=(float(data["similarity"]) if data["similarity"] is not None else None),
+                best_match=data["best_match"],
+                best_similarity=(
+                    float(data["best_similarity"]) if data["best_similarity"] is not None else None
+                ),
+                verdict=str(data["verdict"]),
+                detail=str(data["detail"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"not a valid voice check: {exc}") from exc
 
 
 def _best_match(embedding: list[float], library: VoiceLibrary) -> tuple[str | None, float | None]:
@@ -250,3 +288,200 @@ def verify_dub(
             )
         )
     return checks
+
+
+@dataclass
+class VerifyReport:
+    """What voice verification found over a whole dubbed track (JSON + Markdown).
+
+    The verdict is ``pass`` when every scored segment matched its
+    claimed speaker — uncertain and mismatch checks both flip it to
+    ``review``. Skipped segments never fail the run: silence and
+    wordless lines are a property of the source, not a voice error.
+    ``mean_similarity`` and ``worst_similarity`` cover scored segments
+    only; ``per_speaker`` breaks the same counts down by claimed
+    speaker so a single bad voice does not hide in a good average.
+    """
+
+    match_threshold: float
+    uncertain_threshold: float
+    min_segment_s: float
+    segments_checked: int
+    segments_skipped: int
+    matches: int
+    uncertain: int
+    mismatches: int
+    mean_similarity: float | None
+    worst_index: int | None  # 1-based index of the lowest-similarity scored check
+    worst_similarity: float | None
+    verdict: str  # "pass" or "review"
+    per_speaker: dict[str, dict] = field(default_factory=dict)
+    checks: list[SegmentVoiceCheck] = field(default_factory=list)
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "match_threshold": self.match_threshold,
+                "uncertain_threshold": self.uncertain_threshold,
+                "min_segment_s": self.min_segment_s,
+                "segments_checked": self.segments_checked,
+                "segments_skipped": self.segments_skipped,
+                "matches": self.matches,
+                "uncertain": self.uncertain,
+                "mismatches": self.mismatches,
+                "mean_similarity": (
+                    round(self.mean_similarity, 4) if self.mean_similarity is not None else None
+                ),
+                "worst_index": self.worst_index,
+                "worst_similarity": (
+                    round(self.worst_similarity, 4) if self.worst_similarity is not None else None
+                ),
+                "verdict": self.verdict,
+                "per_speaker": self.per_speaker,
+                "checks": [check.to_dict() for check in self.checks],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+
+    def to_markdown(self) -> str:
+        lines = [
+            "# Voice verification report",
+            "",
+            f"- Verdict: **{self.verdict}**",
+            f"- Segments checked: {self.segments_checked}",
+            f"- Segments skipped: {self.segments_skipped}",
+            f"- Matches: {self.matches}, uncertain: {self.uncertain}, mismatches: {self.mismatches}",
+            (
+                f"- Mean similarity: {self.mean_similarity:.2f}"
+                if self.mean_similarity is not None
+                else "- Mean similarity: n/a (no scored segments)"
+            ),
+        ]
+        if self.worst_index is not None and self.worst_similarity is not None:
+            lines.append(
+                f"- Worst segment: {self.worst_index} (similarity {self.worst_similarity:.2f})"
+            )
+        lines.append(
+            f"- Thresholds: match >= {self.match_threshold:.2f}, "
+            f"uncertain >= {self.uncertain_threshold:.2f}"
+        )
+        if self.per_speaker:
+            lines.append("")
+            lines.append("## Per speaker")
+            for name in sorted(self.per_speaker):
+                entry = self.per_speaker[name]
+                lines.append(
+                    f"- {name}: {entry['checked']} checked, "
+                    f"{entry['matches']} match / {entry['uncertain']} uncertain / "
+                    f"{entry['mismatches']} mismatch, "
+                    f"mean {entry['mean_similarity']:.2f}, "
+                    f"worst {entry['worst_similarity']:.2f}"
+                )
+        if self.checks:
+            lines.append("")
+            lines.append("## Segments")
+            for check in self.checks:
+                sim = f"{check.similarity:.2f}" if check.similarity is not None else "n/a"
+                lines.append(
+                    f"- Segment {check.index} ({check.start:.2f}-"
+                    f"{check.end:.2f}s) {check.speaker or 'unlabelled'} "
+                    f"[{check.verdict}] sim {sim}: {check.detail}"
+                )
+        return "\n".join(lines) + "\n"
+
+    @classmethod
+    def from_dict(cls, data: dict) -> VerifyReport:
+        """Rebuild from :meth:`to_json` output."""
+        if not isinstance(data, dict):
+            raise TypeError("verify report must be a JSON object")
+        try:
+            return cls(
+                match_threshold=float(data["match_threshold"]),
+                uncertain_threshold=float(data["uncertain_threshold"]),
+                min_segment_s=float(data["min_segment_s"]),
+                segments_checked=int(data["segments_checked"]),
+                segments_skipped=int(data["segments_skipped"]),
+                matches=int(data["matches"]),
+                uncertain=int(data["uncertain"]),
+                mismatches=int(data["mismatches"]),
+                mean_similarity=(
+                    float(data["mean_similarity"]) if data["mean_similarity"] is not None else None
+                ),
+                worst_index=(int(data["worst_index"]) if data["worst_index"] is not None else None),
+                worst_similarity=(
+                    float(data["worst_similarity"])
+                    if data["worst_similarity"] is not None
+                    else None
+                ),
+                verdict=str(data["verdict"]),
+                per_speaker={str(k): dict(v) for k, v in data.get("per_speaker", {}).items()},
+                checks=[SegmentVoiceCheck.from_dict(row) for row in data.get("checks", [])],
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"not a valid verify report: {exc}") from exc
+
+    @classmethod
+    def from_json(cls, text: str) -> VerifyReport:
+        """Rebuild from :meth:`to_json` output."""
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"not valid JSON: {exc}") from exc
+        try:
+            return cls.from_dict(data)
+        except TypeError as exc:
+            raise ValueError(str(exc)) from exc
+
+
+def build_verify_report(
+    checks: list[SegmentVoiceCheck],
+    config: VerifyConfig | None = None,
+) -> VerifyReport:
+    """Aggregate per-segment :class:`SegmentVoiceCheck` results into a report."""
+    config = config or VerifyConfig()
+    scored = [c for c in checks if c.similarity is not None]
+    skipped = len(checks) - len(scored)
+    matches = sum(1 for c in checks if c.verdict == "match")
+    uncertain = sum(1 for c in checks if c.verdict == "uncertain")
+    mismatches = sum(1 for c in checks if c.verdict == "mismatch")
+    mean_similarity = (
+        sum(c.similarity for c in scored if c.similarity is not None) / len(scored)
+        if scored
+        else None
+    )
+    worst = min(scored, key=lambda c: c.similarity or 0.0) if scored else None
+
+    per_speaker: dict[str, dict] = {}
+    for check in scored:
+        name = check.speaker or "unknown"
+        entry = per_speaker.setdefault(
+            name,
+            {"checked": 0, "matches": 0, "uncertain": 0, "mismatches": 0, "sims": []},
+        )
+        entry["checked"] += 1
+        entry[check.verdict] += 1
+        entry["sims"].append(check.similarity)
+    for entry in per_speaker.values():
+        sims = entry.pop("sims")
+        entry["mean_similarity"] = round(sum(sims) / len(sims), 4)
+        entry["worst_similarity"] = round(min(sims), 4)
+
+    return VerifyReport(
+        match_threshold=config.match_threshold,
+        uncertain_threshold=config.uncertain_threshold,
+        min_segment_s=config.min_segment_s,
+        segments_checked=len(scored),
+        segments_skipped=skipped,
+        matches=matches,
+        uncertain=uncertain,
+        mismatches=mismatches,
+        mean_similarity=round(mean_similarity, 4) if mean_similarity is not None else None,
+        worst_index=worst.index if worst is not None else None,
+        worst_similarity=round(worst.similarity, 4)
+        if worst is not None and worst.similarity is not None
+        else None,
+        verdict="pass" if uncertain == 0 and mismatches == 0 else "review",
+        per_speaker=per_speaker,
+        checks=list(checks),
+    )
