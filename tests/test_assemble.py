@@ -203,7 +203,7 @@ class TestDubStyle:
             ],
             language="hi",
         )
-        dub, factors, placed = dub_transcript(
+        dub, factors, _placed = dub_transcript(
             transcript,
             ScriptedVoiceCloner(),
             _profile(),
