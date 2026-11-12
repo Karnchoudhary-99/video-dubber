@@ -79,6 +79,7 @@ class DubberConfig:
     voice_library: str | None = None
     bed_level: float | None = None
     style: str | None = None  # default delivery style for dub/dub-multi/patch
+    lexicon: str | None = None  # default pronunciation lexicon JSON for dub/synthesize
     enhance: EnhanceConfig = field(default_factory=EnhanceConfig)
     path: Path | None = None
 
@@ -90,6 +91,7 @@ class DubberConfig:
             "voice_library": self.voice_library,
             "bed_level": self.bed_level,
             "style": self.style,
+            "lexicon": self.lexicon,
             "enhance": self.enhance.to_dict(),
             "path": str(self.path) if self.path else None,
         }
@@ -134,6 +136,7 @@ def _parse_dubber(table: dict) -> DubberConfig:
         "voice_library",
         "bed_level",
         "style",
+        "lexicon",
         "enhance",
     }
     unknown = sorted(set(table) - known)
@@ -160,6 +163,8 @@ def _parse_dubber(table: dict) -> DubberConfig:
             get_style(config.style)
         except StyleError as exc:
             raise ConfigError(f"invalid style in config file: {exc}") from exc
+    if "lexicon" in table:
+        config.lexicon = _require_str(table, "lexicon")
     if "enhance" in table:
         config.enhance = _parse_enhance(table["enhance"])
     return config
