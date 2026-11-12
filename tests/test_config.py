@@ -92,7 +92,7 @@ class TestValidation:
             ("[dubber]\nbed_level = 1.5\n", "bed_level must be between 0 and 1"),
             ('[dubber]\nbed_level = "loud"\n', "bed_level must be a number"),
             ('[dubber]\nstyle = "shouty"\n', "invalid style in config file"),
-            ('[dubber]\nstyle = 7\n', "must be a non-empty string"),
+            ("[dubber]\nstyle = 7\n", "must be a non-empty string"),
             ('[dubber]\ntarget_language = ""\n', "must be a non-empty string"),
             ("[dubber]\ntarget_language = 7\n", "must be a non-empty string"),
             (

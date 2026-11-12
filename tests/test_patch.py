@@ -292,3 +292,43 @@ def test_report_rows_from_old_json_have_no_placed_duration():
         del row["placed_duration_s"]
     loaded = DubReport.from_json(json.dumps(payload))
     assert all(row.placed_duration is None for row in loaded.segments)
+
+
+class TestPatchStyle:
+    def test_styled_patch_fits_faster_than_plain(self):
+        # Six words render ~2.2s at the plain rate in a 2.0s window
+        # (factor ~0.9, unclamped), so the faster style's larger factor
+        # is visible instead of both clamping at 1.6x.
+        transcript, cloner, profile, dub_audio, placed = _dubbed()
+        text = "badli hui line yahan par abhi"
+        _plain, plain_factor, _ = patch_dub(
+            dub_audio, transcript, 2, text, cloner, profile, placed=placed
+        )
+        _styled, styled_factor, _ = patch_dub(
+            dub_audio,
+            transcript,
+            2,
+            text,
+            cloner,
+            profile,
+            placed=placed,
+            style="energetic",
+        )
+        # Faster speech needs a bigger stretch to fill the same window.
+        assert 0.6 <= plain_factor < styled_factor <= 1.6
+
+    def test_unknown_style_raises(self):
+        from video_dubber.style import StyleError
+
+        transcript, cloner, profile, dub_audio, placed = _dubbed()
+        with pytest.raises(StyleError, match="unknown dub style"):
+            patch_dub(
+                dub_audio,
+                transcript,
+                2,
+                "badli hui line",
+                cloner,
+                profile,
+                placed=placed,
+                style="shouty",
+            )

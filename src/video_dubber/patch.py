@@ -30,6 +30,7 @@ from video_dubber.assemble import (
 )
 from video_dubber.audio import AudioData
 from video_dubber.quality import mos_proxy as _mos_proxy
+from video_dubber.style import DubStyle, apply_style, get_style
 from video_dubber.transcript import Segment, Transcript, Word
 from video_dubber.voice import SpeakerProfile, VoiceCloner
 
@@ -125,6 +126,7 @@ def patch_dub(
     original: AudioData | None = None,
     profiles: dict[str, SpeakerProfile] | None = None,
     placed: list[tuple[float, float]] | None = None,
+    style: DubStyle | str | None = None,
 ) -> tuple[AudioData, float, float]:
     """Re-dub timed segment ``index`` inside an existing dub track.
 
@@ -147,6 +149,10 @@ def patch_dub(
     :class:`PatchError` for a bad index or blank text, and
     :class:`~video_dubber.assemble.AssemblyError` when the dub track
     does not cover the segment's window.
+
+    With ``style``, the replacement line is read in that delivery
+    style — the same style the original dub used, so the patched line
+    does not sound like a different performance dropped into the track.
     """
     timed = _timed_segments(transcript)
     if index < 1 or index > len(timed):
@@ -163,9 +169,12 @@ def patch_dub(
             f"dub audio ({dub_audio.duration:.2f}s) does not cover segment {index} "
             f"ending at {segment.end:.2f}s"
         )
+    resolved_style = get_style(style) if isinstance(style, str) else style
     voice = profile
     if profiles is not None and segment.speaker is not None:
         voice = profiles.get(segment.speaker, profile)
+    if resolved_style is not None:
+        voice = apply_style(voice, resolved_style)
     spoken = cloner.synthesize(new_text, voice)
     fitted, factor = fit_to_window(spoken, segment.duration)
     if original is not None:

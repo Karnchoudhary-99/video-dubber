@@ -2617,3 +2617,171 @@ def test_cli_dub_level_target_without_level_fails(tmp_path, capsys):
         == 2
     )
     assert "need --level" in capsys.readouterr().err
+
+
+class TestCliStyles:
+    def test_styles_lists_presets(self, tmp_path, capsys):
+        assert main(["styles"]) == 0
+        out = capsys.readouterr().out
+        assert "5 dubbing style(s)" in out
+        for name in ("documentary", "conversational", "energetic", "narration", "dramatic"):
+            assert name in out
+        assert "energetic: 1.15x rate, +2 semitones" in out
+
+    def test_styles_json_format(self, tmp_path, capsys):
+        assert main(["styles", "--format", "json"]) == 0
+        data = json.loads(capsys.readouterr().out)
+        assert [item["name"] for item in data] == [
+            "documentary",
+            "conversational",
+            "energetic",
+            "narration",
+            "dramatic",
+        ]
+        assert data[2]["rate_factor"] == pytest.approx(1.15)
+
+    def test_dub_with_style_records_it(self, tmp_path, capsys):
+        transcript = tmp_path / "hi.json"
+        _write_dub_transcript(transcript)
+        profile = tmp_path / "dub.json"
+        _write_dub_profile(profile)
+        out = tmp_path / "dub.wav"
+        report = tmp_path / "report.json"
+        assert (
+            main(
+                [
+                    "dub",
+                    str(transcript),
+                    "--profile",
+                    str(profile),
+                    "--style",
+                    "energetic",
+                    "--out",
+                    str(out),
+                    "--report-out",
+                    str(report),
+                ]
+            )
+            == 0
+        )
+        assert "delivery style: energetic" in capsys.readouterr().out
+        data = json.loads(report.read_text(encoding="utf-8"))
+        assert data["style"] == "energetic"
+
+    def test_dub_unknown_style_fails(self, tmp_path, capsys):
+        transcript = tmp_path / "hi.json"
+        _write_dub_transcript(transcript)
+        profile = tmp_path / "dub.json"
+        _write_dub_profile(profile)
+        assert (
+            main(
+                [
+                    "dub",
+                    str(transcript),
+                    "--profile",
+                    str(profile),
+                    "--style",
+                    "shouty",
+                    "--out",
+                    str(tmp_path / "dub.wav"),
+                ]
+            )
+            == 2
+        )
+        assert "unknown dub style 'shouty'" in capsys.readouterr().err
+
+    def test_dub_style_from_config_and_flag_beats_it(self, tmp_path, capsys):
+        transcript = tmp_path / "hi.json"
+        _write_dub_transcript(transcript)
+        profile = tmp_path / "dub.json"
+        _write_dub_profile(profile)
+        config_path = tmp_path / "dubber.toml"
+        config_path.write_text('[dubber]\nstyle = "narration"\n', encoding="utf-8")
+        out = tmp_path / "dub.wav"
+        report = tmp_path / "report.json"
+        assert (
+            main(
+                [
+                    "--config",
+                    str(config_path),
+                    "dub",
+                    str(transcript),
+                    "--profile",
+                    str(profile),
+                    "--out",
+                    str(out),
+                    "--report-out",
+                    str(report),
+                ]
+            )
+            == 0
+        )
+        assert json.loads(report.read_text(encoding="utf-8"))["style"] == "narration"
+        # An explicit --style wins over the file.
+        assert (
+            main(
+                [
+                    "--config",
+                    str(config_path),
+                    "dub",
+                    str(transcript),
+                    "--profile",
+                    str(profile),
+                    "--style",
+                    "energetic",
+                    "--out",
+                    str(out),
+                    "--report-out",
+                    str(report),
+                ]
+            )
+            == 0
+        )
+        assert json.loads(report.read_text(encoding="utf-8"))["style"] == "energetic"
+
+    def test_estimate_with_style_is_shorter(self, tmp_path, capsys):
+        import re
+
+        transcript = tmp_path / "hi.json"
+        _write_dub_transcript(transcript)
+        profile = tmp_path / "dub.json"
+        _write_dub_profile(profile)
+        numbers = {}
+        for label, extra in (("plain", []), ("styled", ["--style", "energetic"])):
+            assert (
+                main(["estimate", str(transcript), "--profile", str(profile), *extra]) == 0
+            )
+            out = capsys.readouterr().out
+            match = re.search(r"Predicted speech: ([0-9.]+)s", out)
+            assert match is not None
+            numbers[label] = float(match.group(1))
+        assert numbers["styled"] < numbers["plain"]
+        assert "Delivery style: energetic" in out
+
+    def test_patch_with_style(self, tmp_path, capsys):
+        dub, transcript, profile, _report = _make_dubbed(tmp_path)
+        out = tmp_path / "patched.wav"
+        assert (
+            main(
+                [
+                    "patch",
+                    "--dub",
+                    str(dub),
+                    "--transcript",
+                    str(transcript),
+                    "--profile",
+                    str(profile),
+                    "--segment",
+                    "2",
+                    "--text",
+                    "बदला हुआ",
+                    "--style",
+                    "energetic",
+                    "--out",
+                    str(out),
+                ]
+            )
+            == 0
+        )
+        assert "patched segment 2" in capsys.readouterr().out
+        assert load_wav(str(out)).duration == pytest.approx(load_wav(str(dub)).duration)
