@@ -288,3 +288,16 @@ class TestDubMultiStyle:
         assert summary.succeeded == 0
         assert set(summary.failures) == {"hi", "es"}
         assert "unknown dub style" in summary.failures["hi"]
+
+
+def test_lexicon_applies_per_target(tmp_path):
+    from video_dubber.lexicon import PronunciationLexicon
+
+    # "Hello" translates to नमस्ते in Hindi, so the Hindi dub applies the
+    # lexicon entry; the Spanish dub has no matching word and applies none.
+    lexicon = PronunciationLexicon(entries={"नमस्ते": "namaste"})
+    summary = _run(tmp_path, lexicon=lexicon)
+    assert summary.succeeded == 2
+    reports = {result.target: result.report for result in summary.results}
+    assert reports["hi"].lexicon_applied >= 1
+    assert reports["es"].lexicon_applied == 0

@@ -25,6 +25,7 @@ from video_dubber.assemble import build_report, dub_transcript, mux_audio
 from video_dubber.audio import DEFAULT_SAMPLE_RATE, load_wav, resample, save_wav
 from video_dubber.enhance import enhance_audio
 from video_dubber.extract import extract_audio
+from video_dubber.lexicon import LexiconError, apply_lexicon, load_lexicon
 from video_dubber.quality import wer_from_transcripts
 from video_dubber.report import render_batch_html
 from video_dubber.style import StyleError, get_style
@@ -53,7 +54,7 @@ __all__ = [
     "summarize",
 ]
 
-_PATH_FIELDS = ("video", "transcript", "script", "profile", "glossary", "reference")
+_PATH_FIELDS = ("video", "transcript", "script", "profile", "glossary", "reference", "lexicon")
 _JOB_KEYS = frozenset(_PATH_FIELDS) | {
     "name",
     "target",
@@ -95,6 +96,7 @@ class BatchJob:
     bed_level: float | None = None  # keep the video's music bed under the dub (0-1)
     enhance: bool = False  # enhance the finished dub track (no trimming: timing preserved)
     style: str | None = None  # delivery style for the dub (None = the plain voice)
+    lexicon: str | None = None  # pronunciation lexicon JSON path (None = speak as written)
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -126,6 +128,8 @@ class BatchJob:
                 get_style(self.style)
             except StyleError as exc:
                 raise BatchError(f"job {self.name!r}: {exc}") from exc
+        if self.lexicon is not None and not isinstance(self.lexicon, str):
+            raise BatchError(f"job {self.name!r}: 'lexicon' must be a file path string")
 
 
 @dataclass
@@ -309,6 +313,18 @@ def run_job(
             glossary=glossary,
             max_chars=job.max_chars,
         )
+        lexicon = None
+        lexicon_applied = 0
+        if job.lexicon is not None:
+            try:
+                lexicon = load_lexicon(job.lexicon)
+            except LexiconError as exc:
+                raise BatchError(f"job {job.name!r}: {exc}") from exc
+            lexicon_applied = sum(
+                apply_lexicon(segment.text, lexicon).applied_count
+                for segment in translated.segments
+                if segment.words
+            )
         dub_audio, fit_factors, placed = dub_transcript(
             translated,
             cloner or ScriptedVoiceCloner(),
@@ -317,6 +333,7 @@ def run_job(
             profiles=_load_profiles(job.profiles),
             bed_level=job.bed_level,
             style=job.style,
+            lexicon=lexicon,
         )
         enhancement = None
         if job.enhance:
@@ -334,6 +351,7 @@ def run_job(
             bed_level=job.bed_level,
             enhancement=enhancement,
             style=job.style,
+            lexicon_applied=lexicon_applied,
         )
         outputs = {"dubbed_wav": dubbed_wav}
         if job.video is not None and job.mux:

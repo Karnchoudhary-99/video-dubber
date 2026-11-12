@@ -16,6 +16,8 @@ bed_level = 0.3
 # Default delivery style for `dub` / `dub-multi` / `patch`
 # (documentary, conversational, energetic, narration, dramatic).
 style = "documentary"
+# Default pronunciation lexicon JSON for `dub` / `dub-multi` / `synthesize`.
+lexicon = "lexicon.json"
 
 [dubber.enhance]
 # Defaults for `enhance` (dBFS / Hz).

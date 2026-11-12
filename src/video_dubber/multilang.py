@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from video_dubber.assemble import DubReport, build_report, dub_transcript
 from video_dubber.audio import AudioData, save_wav
 from video_dubber.enhance import enhance_audio
+from video_dubber.lexicon import PronunciationLexicon, apply_lexicon
 from video_dubber.style import DubStyle
 from video_dubber.subtitles import retime_transcript
 from video_dubber.transcript import Transcript
@@ -175,6 +176,7 @@ def dub_all_targets(
     subtitles: bool = True,
     stop_on_error: bool = False,
     style: DubStyle | str | None = None,
+    lexicon: PronunciationLexicon | None = None,
 ) -> MultiTargetSummary:
     """Dub ``transcript`` into every language in ``targets``.
 
@@ -224,6 +226,13 @@ def dub_all_targets(
                 max_chars=max_chars,
             )
             coverage = getattr(translator, "last_coverage", None)
+            lexicon_applied = 0
+            if lexicon is not None:
+                lexicon_applied = sum(
+                    apply_lexicon(segment.text, lexicon).applied_count
+                    for segment in translated.segments
+                    if segment.words
+                )
             dub_audio, fit_factors, placed = dub_transcript(
                 translated,
                 cloner,
@@ -232,6 +241,7 @@ def dub_all_targets(
                 profiles=profiles,
                 bed_level=bed_level,
                 style=style,
+                lexicon=lexicon,
             )
             enhancement = None
             if enhance:
@@ -250,6 +260,7 @@ def dub_all_targets(
                 bed_level=bed_level,
                 enhancement=enhancement,
                 style=style,
+                lexicon_applied=lexicon_applied,
             )
             report_path = os.path.join(out_dir, f"{stem}.{target}.report.json")
             with open(report_path, "w", encoding="utf-8") as fh:

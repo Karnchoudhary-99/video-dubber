@@ -35,6 +35,7 @@ keeping the speaker's voice.
 - [x] Environment diagnostics (`dubber doctor`: tools, versions, disk space)
 - [x] Per-segment loudness levelling (`level.py`: even out line volumes, `dubber level`, `dub --level`)
 - [x] Dubbing style presets (documentary/conversational/energetic/narration/dramatic, `dub --style`, `dubber styles`)
+- [x] Pronunciation lexicon (names/acronyms spoken as the lexicon says, `dub --lexicon`, `dubber lexicon`)
 
 ## Quick start
 
@@ -419,6 +420,53 @@ video-dubber dub translated.json --profile asha.json --style energetic \
   energetic dub's max fit is 1.27, outside the 0.8–1.25 band, so its
   verdict honestly flips to `review`: the style needs wider windows
   for these lines, and the report says so.
+
+## Pronunciation lexicon
+
+A synthesiser guesses at proper nouns — "NASA" comes out letter by
+letter, "Karn" with the wrong vowel, "New Delhi" flattened. A lexicon
+is a JSON file mapping the written form to the form the synthesiser
+should speak: a respelling (`"Nguyen" -> "win"`), a spaced-out acronym
+(`"NASA" -> "N A S A"`), or a simpler spelling (`"Bengaluru" ->
+"bangalore"`):
+
+```json
+{"entries": {"NASA": "N A S A", "Karn": "kar-n", "New Delhi": "nyoo delhi"}}
+```
+
+```bash
+# Check a lexicon, or see what it does to a line
+video-dubber lexicon lexicon.json
+video-dubber lexicon lexicon.json --apply "Karn reports from New Delhi for NASA"
+#   Kar-n reports from Nyoo delhi for N A S A
+
+# Dub (or synthesize) with it — also: dub-multi, batch manifests,
+# and a [dubber] lexicon = "..." default in dubber.toml
+video-dubber dub translated.json --profile asha.json --lexicon lexicon.json \
+  --out dubbed.wav --report-out report.json
+# lexicon pronunciations applied: 3
+```
+
+- Matching is case-insensitive with real word boundaries, longest
+  phrase first (`"New Delhi"` wins over `"Delhi"`), and case is
+  preserved where it matters: an all-caps match gets an all-caps
+  pronunciation, a capitalised match gets a capitalised one. Matching
+  reuses the grapheme-aware tokenizer from the translation pipeline,
+  so Devanagari entries such as `"नमस्ते" -> "namaste"` match whole —
+  the glossary's `\b` regex would shatter them at the combining marks.
+  Entries match whole words only: `"NASA"` never rewrites `"NASAL"`,
+  and `"Karn"` leaves `"Karn's"` alone.
+- The lexicon rewrites only the spoken audio, never the transcript:
+  subtitles keep the written words, and the quality report records
+  how many pronunciations were applied (`lexicon_applied`, in JSON,
+  Markdown and HTML) so a reviewer can see exactly what changed. A
+  missing or invalid lexicon file is a hard error (exit 2), never a
+  silent fall-back to guessing.
+- Demo: `python examples/demo_lexicon.py` — one two-line transcript
+  dubbed plain (mean fit 1.39) and with the lexicon (mean fit 1.19,
+  3 pronunciations applied). Both verdicts honestly read `review`:
+  the demo's windows are tight for these lines, and the longer
+  respellings need the stronger stretch the report shows.
 
 ## Speaker diarization
 
@@ -1034,6 +1082,22 @@ styled rate with style-aware cache probes, and unknown style names
 fail loudly instead of silently dubbing in the default (the demo's
 energetic dub needs a 1.27x max fit, so its verdict honestly flips
 to `review`).
+Pronunciation lexicon is done (715 tests): `lexicon.py` maps written
+forms to spoken ones (respellings, spaced-out acronyms, multi-word
+phrases), matched case-insensitively with real word boundaries,
+longest phrase first, on the grapheme-aware tokenizer — so Devanagari
+entries match whole where the glossary's `\b` regex would shatter
+them. `dub`/`dub-multi`/`synthesize` take `--lexicon`, batch
+manifests take a `lexicon` key (or a `defaults` one), `dubber.toml`
+pins a default, and `dubber lexicon` checks a file or applies it to
+a line. The lexicon rewrites only the spoken audio, never the
+transcript, and the quality report records how many pronunciations
+were applied (`lexicon_applied`, per target in `dub-multi`); a bad
+lexicon file fails loudly (exit 2) instead of silently dubbing
+unguessed. The demo dubs one two-line transcript plain (mean fit
+1.39) and with the lexicon (mean fit 1.19, 3 pronunciations
+applied) — both verdicts honestly read `review`, the demo's windows
+are tight for these lines.
 Remaining: the self-review
 checklist and public flip — the
 project stays private per the 5–7 day pace rule (started 2026-11-08,
