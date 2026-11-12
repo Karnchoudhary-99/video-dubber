@@ -2748,9 +2748,7 @@ class TestCliStyles:
         _write_dub_profile(profile)
         numbers = {}
         for label, extra in (("plain", []), ("styled", ["--style", "energetic"])):
-            assert (
-                main(["estimate", str(transcript), "--profile", str(profile), *extra]) == 0
-            )
+            assert main(["estimate", str(transcript), "--profile", str(profile), *extra]) == 0
             out = capsys.readouterr().out
             match = re.search(r"Predicted speech: ([0-9.]+)s", out)
             assert match is not None

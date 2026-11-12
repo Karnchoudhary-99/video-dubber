@@ -27,6 +27,7 @@ from video_dubber.enhance import enhance_audio
 from video_dubber.extract import extract_audio
 from video_dubber.quality import wer_from_transcripts
 from video_dubber.report import render_batch_html
+from video_dubber.style import StyleError, get_style
 from video_dubber.subtitles import retime_transcript
 from video_dubber.transcribe import (
     ScriptedTranscriber,
@@ -64,6 +65,7 @@ _JOB_KEYS = frozenset(_PATH_FIELDS) | {
     "profiles",
     "bed_level",
     "enhance",
+    "style",
 }
 _DEFAULT_KEYS = _JOB_KEYS - {"name"}
 
@@ -92,6 +94,7 @@ class BatchJob:
     profiles: dict[str, str] | None = None  # speaker name -> profile JSON path
     bed_level: float | None = None  # keep the video's music bed under the dub (0-1)
     enhance: bool = False  # enhance the finished dub track (no trimming: timing preserved)
+    style: str | None = None  # delivery style for the dub (None = the plain voice)
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -118,6 +121,11 @@ class BatchJob:
             raise BatchError(
                 f"job {self.name!r}: 'bed_level' needs a video job (no original audio)"
             )
+        if self.style is not None:
+            try:
+                get_style(self.style)
+            except StyleError as exc:
+                raise BatchError(f"job {self.name!r}: {exc}") from exc
 
 
 @dataclass
@@ -308,6 +316,7 @@ def run_job(
             original,
             profiles=_load_profiles(job.profiles),
             bed_level=job.bed_level,
+            style=job.style,
         )
         enhancement = None
         if job.enhance:
@@ -324,6 +333,7 @@ def run_job(
             translation_coverage=translator.last_coverage,
             bed_level=job.bed_level,
             enhancement=enhancement,
+            style=job.style,
         )
         outputs = {"dubbed_wav": dubbed_wav}
         if job.video is not None and job.mux:

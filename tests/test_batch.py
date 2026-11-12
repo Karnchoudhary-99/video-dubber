@@ -446,3 +446,19 @@ def test_shipped_multispeaker_manifest_runs_end_to_end(tmp_path):
     assert result.outputs["translated_srt"].endswith("translated.srt")
     with open(result.outputs["report"], encoding="utf-8") as fh:
         assert json.loads(fh.read())["speakers_dubbed"] == 2
+
+
+def test_manifest_accepts_style_and_defaults(tmp_path):
+    manifest = _manifest(tmp_path, [_job("clip1", style="energetic")])
+    assert manifest.jobs[0].style == "energetic"
+    manifest = _manifest(tmp_path, [_job("clip1")], defaults={"style": "narration"})
+    assert manifest.jobs[0].style == "narration"
+    manifest = _manifest(
+        tmp_path, [_job("clip1", style="dramatic")], defaults={"style": "narration"}
+    )
+    assert manifest.jobs[0].style == "dramatic"  # job wins over defaults
+
+
+def test_job_rejects_unknown_style():
+    with pytest.raises(BatchError, match="unknown dub style 'shouty'"):
+        BatchJob(name="x", target="hi", profile="p.json", video="v.mp4", style="shouty")
