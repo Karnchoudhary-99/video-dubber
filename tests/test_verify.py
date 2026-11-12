@@ -4,7 +4,7 @@ import pytest
 
 from video_dubber.audio import concat, make_silence, make_sine
 from video_dubber.transcript import Segment, Transcript, Word
-from video_dubber.verify import VerifyConfig, verify_dub
+from video_dubber.verify import VerifyConfig, VerifyError, verify_dub
 from video_dubber.voice import VoiceLibrary, clone_from_references
 
 
@@ -136,3 +136,40 @@ class TestSkippedSegments:
             config=VerifyConfig(min_segment_s=0.1),
         )
         assert checks[0].verdict == "match"
+
+
+class TestValidation:
+    def test_match_bar_must_clear_the_uncertain_bar(self):
+        with pytest.raises(VerifyError):
+            verify_dub(
+                make_sine(220.0, 1.0),
+                _transcript(["Asha"]),
+                _library(),
+                config=VerifyConfig(match_threshold=0.80, uncertain_threshold=0.80),
+            )
+
+    def test_thresholds_must_be_in_range(self):
+        with pytest.raises(VerifyError):
+            verify_dub(
+                make_sine(220.0, 1.0),
+                _transcript(["Asha"]),
+                _library(),
+                config=VerifyConfig(match_threshold=1.5),
+            )
+        with pytest.raises(VerifyError):
+            verify_dub(
+                make_sine(220.0, 1.0),
+                _transcript(["Asha"]),
+                _library(),
+                config=VerifyConfig(uncertain_threshold=0.0),
+            )
+
+    def test_empty_transcript_and_empty_library_are_errors(self):
+        with pytest.raises(VerifyError):
+            verify_dub(make_sine(220.0, 1.0), Transcript(segments=[], language="en"), _library())
+        with pytest.raises(VerifyError):
+            verify_dub(make_sine(220.0, 1.0), _transcript(["Asha"]), VoiceLibrary())
+
+    def test_claimed_speaker_with_no_profile_is_a_hard_error(self):
+        with pytest.raises(VerifyError, match="no such profile"):
+            verify_dub(make_sine(220.0, 1.0), _transcript(["Nobody"]), _library())
