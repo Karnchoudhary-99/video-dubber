@@ -3056,3 +3056,35 @@ def test_cli_init_with_source_seeds_job(tmp_path, monkeypatch):
     manifest = json.loads((tmp_path / "my-dub" / "manifest.json").read_text())
     assert [job["name"] for job in manifest["jobs"]] == ["example", "clip"]
     assert manifest["jobs"][1]["backend"] == "whisper"
+
+
+def test_cli_status_fresh_project(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    assert main(["init", "my-dub"]) == 0
+    capsys.readouterr()
+    monkeypatch.chdir(tmp_path / "my-dub")
+    assert main(["status"]) == 0
+    out = capsys.readouterr().out
+    assert "0/1 jobs done (1 not started)" in out
+    assert "example (hi): not started" in out
+    assert main(["status", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["jobs"][0]["state"] == "not started"
+
+
+def test_cli_status_after_batch(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    assert main(["init", "my-dub"]) == 0
+    capsys.readouterr()
+    monkeypatch.chdir(tmp_path / "my-dub")
+    assert main(["batch", "manifest.json", "--out-dir", "out"]) == 0
+    capsys.readouterr()
+    assert main(["status"]) == 0
+    out = capsys.readouterr().out
+    assert "1/1 jobs done (1 done)" in out
+    assert "verdict review" in out
+
+
+def test_cli_status_missing_directory(tmp_path, capsys):
+    assert main(["status", str(tmp_path / "nope")]) == 1
+    assert "not a directory" in capsys.readouterr().err
