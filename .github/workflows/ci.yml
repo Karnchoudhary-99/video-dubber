@@ -10,7 +10,24 @@ jobs:
           python-version: "3.12"
       - run: pip install -e .[dev]
       - name: Install ffmpeg (extraction tests)
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+        # The apt step hung then failed on 2026-11-11 (runs 43040767542,
+        # 43043851394, 43059834750, 43061272623): a slow mirror can stall
+        # apt-get update for ~1h and fail the whole run. Retry the install
+        # up to 3 times and bound each attempt so a stuck mirror fails
+        # fast instead of burning the run.
+        timeout-minutes: 15
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          for attempt in 1 2 3; do
+            if timeout 240 sudo apt-get update -qq \
+              && timeout 240 sudo apt-get install -y -qq --fix-missing ffmpeg; then
+              exit 0
+            fi
+            echo "ffmpeg install attempt $attempt failed, retrying in 10s..."
+            sleep 10
+          done
+          echo "ffmpeg install failed after 3 attempts" >&2
+          exit 1
       - run: ruff check src tests examples
       - run: ruff format --check src tests examples
       - run: pytest -q
