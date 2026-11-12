@@ -13,6 +13,9 @@ backend = "dictionary"
 voice_library = "voices.json"
 # Default music-bed mix level for `dub` (0-1; needs --original).
 bed_level = 0.3
+# Default delivery style for `dub` / `dub-multi` / `patch`
+# (documentary, conversational, energetic, narration, dramatic).
+style = "documentary"
 
 [dubber.enhance]
 # Defaults for `enhance` (dBFS / Hz).

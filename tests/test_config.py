@@ -20,6 +20,7 @@ source_language = "en"
 backend = "argos"
 voice_library = "voices.json"
 bed_level = 0.3
+style = "documentary"
 
 [dubber.enhance]
 target = -18.0
@@ -48,6 +49,7 @@ class TestLoadConfig:
         assert config.backend == "argos"
         assert config.voice_library == "voices.json"
         assert config.bed_level == pytest.approx(0.3)
+        assert config.style == "documentary"
         assert config.enhance.target == pytest.approx(-18.0)
         assert config.enhance.ceiling == pytest.approx(-2.0)
         assert config.enhance.high_pass == pytest.approx(100.0)
@@ -76,6 +78,7 @@ class TestLoadConfig:
         path = _write_toml(tmp_path / "dubber.toml", FULL_TOML)
         data = load_config(path).to_dict()
         assert data["target_language"] == "hi"
+        assert data["style"] == "documentary"
         assert data["enhance"]["target"] == pytest.approx(-18.0)
         assert data["path"] == str(path)
 
@@ -88,6 +91,8 @@ class TestValidation:
             ('[dubber]\nbackend = "whisper"\n', "backend must be"),
             ("[dubber]\nbed_level = 1.5\n", "bed_level must be between 0 and 1"),
             ('[dubber]\nbed_level = "loud"\n', "bed_level must be a number"),
+            ('[dubber]\nstyle = "shouty"\n', "invalid style in config file"),
+            ('[dubber]\nstyle = 7\n', "must be a non-empty string"),
             ('[dubber]\ntarget_language = ""\n', "must be a non-empty string"),
             ("[dubber]\ntarget_language = 7\n", "must be a non-empty string"),
             (
