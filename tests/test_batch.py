@@ -462,3 +462,39 @@ def test_manifest_accepts_style_and_defaults(tmp_path):
 def test_job_rejects_unknown_style():
     with pytest.raises(BatchError, match="unknown dub style 'shouty'"):
         BatchJob(name="x", target="hi", profile="p.json", video="v.mp4", style="shouty")
+
+
+def test_manifest_accepts_lexicon_and_defaults(tmp_path):
+    lexicon = tmp_path / "lex.json"
+    lexicon.write_text(json.dumps({"entries": {"NASA": "N A S A"}}))
+    manifest = _manifest(tmp_path, [_job("clip1", lexicon="lex.json")])
+    assert manifest.jobs[0].lexicon == str(lexicon)
+    manifest = _manifest(tmp_path, [_job("clip1")], defaults={"lexicon": "lex.json"})
+    assert manifest.jobs[0].lexicon == str(lexicon)
+
+
+def test_job_rejects_non_string_lexicon():
+    with pytest.raises(BatchError, match="'lexicon' must be a file path string"):
+        BatchJob(name="x", target="hi", profile="p.json", video="v.mp4", lexicon=42)
+
+
+def test_run_job_lexicon_lands_in_report(tmp_path):
+    from video_dubber.batch import run_job
+
+    # "hello" translates to नमस्ते, so a lexicon entry for it is applied
+    # to the translated transcript before synthesis.
+    lexicon_path = tmp_path / "lex.json"
+    lexicon_path.write_text(json.dumps({"entries": {"नमस्ते": "namaste"}}), encoding="utf-8")
+    transcript = _transcript_file(tmp_path, "src.json", "hello mars good morning")
+    job = BatchJob(
+        name="clip1",
+        target="hi",
+        profile=_profile_file(tmp_path),
+        transcript=transcript,
+        lexicon=str(lexicon_path),
+    )
+    result = run_job(job, str(tmp_path / "out"))
+    assert result.status == "ok"
+    with open(result.outputs["report"], encoding="utf-8") as fh:
+        report = json.loads(fh.read())
+    assert report["lexicon_applied"] >= 1

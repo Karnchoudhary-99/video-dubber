@@ -21,6 +21,7 @@ backend = "argos"
 voice_library = "voices.json"
 bed_level = 0.3
 style = "documentary"
+lexicon = "lexicon.json"
 
 [dubber.enhance]
 target = -18.0
@@ -50,6 +51,7 @@ class TestLoadConfig:
         assert config.voice_library == "voices.json"
         assert config.bed_level == pytest.approx(0.3)
         assert config.style == "documentary"
+        assert config.lexicon == "lexicon.json"
         assert config.enhance.target == pytest.approx(-18.0)
         assert config.enhance.ceiling == pytest.approx(-2.0)
         assert config.enhance.high_pass == pytest.approx(100.0)
