@@ -40,6 +40,7 @@ keeping the speaker's voice.
 - [x] Subtitle QA (readability checks: reading speed, line width, cue length, overlaps, gaps, `dubber qa`)
 - [x] Voice-consistency verification (per-segment embedding similarity vs the claimed speaker, match/uncertain/mismatch, `dubber verify`, `dub --verify`)
 - [x] Project scaffolding (valid-on-the-spot `dubber.toml` + manifest + voice library, runnable offline example job, `dubber init`)
+- [x] Project status (`dubber status`: not started / partial / done / stale per job, report verdict + MOS, `--json`)
 
 ## Quick start
 
@@ -77,6 +78,22 @@ cd my-first-dub && video-dubber batch manifest.json
   a broken project.
 - Demo: `python examples/demo_init.py` — scaffolds a project, runs its
   example batch job, then shows the refusal and the `--force` override.
+
+`dubber status` grades the project without running anything: it loads
+the config and the manifest (a broken file is reported, not fatal),
+then grades every job from `out/<job>/` — **not started**, **partial**
+(output dir but no dub), **done** (with the report verdict and MOS
+proxy), or **stale** (the source changed since the dub was made).
+`--json` prints the same status for scripting:
+
+```bash
+video-dubber status
+# - 1/1 jobs done (1 done)
+#   - example (hi): done, verdict review, MOS proxy 3.25
+```
+
+- Demo: `python examples/demo_status.py` — status before, after, and
+  after touching the source (not started → done → stale).
 
 ## Audio extraction + transcription
 
