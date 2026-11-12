@@ -180,7 +180,7 @@ def verify_dub(
                     best_similarity=None,
                     verdict="skipped",
                     detail=(
-                        f"segment lasts {end - start:.2f}s "
+                        f"too short to verify: segment lasts {end - start:.2f}s "
                         f"(min {config.min_segment_s:.2f}s for a stable embedding)"
                     ),
                 )

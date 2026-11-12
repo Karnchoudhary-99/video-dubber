@@ -2,9 +2,9 @@
 
 import pytest
 
-from video_dubber.audio import concat, make_sine
+from video_dubber.audio import concat, make_silence, make_sine
 from video_dubber.transcript import Segment, Transcript, Word
-from video_dubber.verify import verify_dub
+from video_dubber.verify import VerifyConfig, verify_dub
 from video_dubber.voice import VoiceLibrary, clone_from_references
 
 
@@ -72,3 +72,67 @@ class TestScoringBands:
         assert checks[0].best_match == "Ravi"
         assert "sounds like Ravi" in checks[0].detail
         assert "not Asha" in checks[0].detail
+
+
+class TestSkippedSegments:
+    def test_silent_segment_is_skipped_not_an_error(self):
+        audio = concat(make_sine(220.0, 1.0), make_silence(1.0))
+        checks = verify_dub(audio, _transcript(["Asha", "Ravi"]), _library())
+        assert checks[0].verdict == "match"
+        assert checks[1].verdict == "skipped"
+        assert checks[1].similarity is None
+        assert "silent" in checks[1].detail
+
+    def test_too_short_segment_is_skipped(self):
+        transcript = Transcript(
+            segments=[
+                Segment(
+                    words=[Word("hi", 0.0, 0.2)],
+                    speaker="Asha",
+                )
+            ],
+            language="en",
+        )
+        checks = verify_dub(make_sine(220.0, 1.0), transcript, _library())
+        assert checks[0].verdict == "skipped"
+        assert "too short" in checks[0].detail
+
+    def test_wordless_segment_is_skipped(self):
+        transcript = Transcript(
+            segments=[
+                Segment(words=[], speaker="Asha"),
+                Segment(
+                    words=[Word("hello", 1.0, 1.5), Word("mars", 1.5, 2.0)],
+                    speaker="Asha",
+                ),
+            ],
+            language="en",
+        )
+        audio = concat(make_silence(1.0), make_sine(220.0, 1.0))
+        checks = verify_dub(audio, transcript, _library())
+        assert checks[0].verdict == "skipped"
+        assert "wordless" in checks[0].detail
+        assert checks[1].verdict == "match"
+
+    def test_unlabelled_segment_is_skipped(self):
+        checks = verify_dub(make_sine(220.0, 1.0), _transcript([None]), _library())
+        assert checks[0].verdict == "skipped"
+        assert "no speaker label" in checks[0].detail
+
+    def test_short_threshold_is_configurable(self):
+        transcript = Transcript(
+            segments=[
+                Segment(
+                    words=[Word("hi", 0.0, 0.2)],
+                    speaker="Asha",
+                )
+            ],
+            language="en",
+        )
+        checks = verify_dub(
+            make_sine(220.0, 1.0),
+            transcript,
+            _library(),
+            config=VerifyConfig(min_segment_s=0.1),
+        )
+        assert checks[0].verdict == "match"
