@@ -39,7 +39,9 @@ def test_clean_transcript_passes():
 
 def test_too_fast_cue_is_a_warning():
     # 47 chars in 1.0s = 47 chars/s, well above the 20 cap.
-    transcript = Transcript(segments=[_seg("Pack as many words as you can into this cue now", 0.0, 1.0)])
+    transcript = Transcript(
+        segments=[_seg("Pack as many words as you can into this cue now", 0.0, 1.0)]
+    )
     report = qa_transcript(transcript)
     assert report.verdict == "review"
     assert _kinds(report) == ["too-fast"]
@@ -63,7 +65,9 @@ def test_too_many_lines_and_long_word():
     assert "3 lines" in report.issues[0].detail
 
     # One 48-char word can never be wrapped onto a 42-char line.
-    wordy = Transcript(segments=[_seg("supercalifragilisticexpialidociousnesswinsbigger", 0.0, 3.0)])
+    wordy = Transcript(
+        segments=[_seg("supercalifragilisticexpialidociousnesswinsbigger", 0.0, 3.0)]
+    )
     wordy_report = qa_transcript(wordy)
     assert _kinds(wordy_report) == ["long-word"]
 
@@ -149,7 +153,9 @@ def test_json_round_trip():
 
 
 def test_markdown_lists_every_issue():
-    transcript = Transcript(segments=[_seg("Pack as many words as you can into this cue now", 0.0, 1.0)])
+    transcript = Transcript(
+        segments=[_seg("Pack as many words as you can into this cue now", 0.0, 1.0)]
+    )
     md = qa_transcript(transcript).to_markdown()
     assert "Verdict: **review**" in md
     assert "too-fast" in md

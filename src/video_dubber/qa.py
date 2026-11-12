@@ -216,9 +216,7 @@ class QaReport:
 
 def _wrap_lines(text: str, width: int) -> list[str]:
     """Word-aware wrap; a word longer than ``width`` stays whole."""
-    return textwrap.wrap(
-        text, width=width, break_long_words=False, break_on_hyphens=False
-    )
+    return textwrap.wrap(text, width=width, break_long_words=False, break_on_hyphens=False)
 
 
 def qa_transcript(
@@ -240,9 +238,7 @@ def qa_transcript(
     if config.min_cue_s < 0:
         raise QaError(f"min_cue_s must be non-negative, got {config.min_cue_s}")
     if config.max_cue_s <= 0 or config.max_cue_s < config.min_cue_s:
-        raise QaError(
-            f"max_cue_s must be positive and >= min_cue_s, got {config.max_cue_s}"
-        )
+        raise QaError(f"max_cue_s must be positive and >= min_cue_s, got {config.max_cue_s}")
     if config.min_gap_s < 0:
         raise QaError(f"min_gap_s must be non-negative, got {config.min_gap_s}")
 

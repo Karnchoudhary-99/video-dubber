@@ -50,7 +50,6 @@ from pathlib import Path
 
 from video_dubber import __version__, level
 from video_dubber.align import AlignConfig, AlignError, align_transcript
-from video_dubber.qa import QaConfig, QaError, qa_transcript
 from video_dubber.assemble import (
     AssemblyError,
     DubReport,
@@ -107,6 +106,7 @@ from video_dubber.merge import MergeConfig, MergeError, merge_transcript
 from video_dubber.multilang import MultiTargetError, dub_all_targets, parse_targets
 from video_dubber.patch import PatchError, patch_dub, patch_transcript, refresh_report
 from video_dubber.preflight import run_preflight
+from video_dubber.qa import QaConfig, QaError, qa_transcript
 from video_dubber.render import RenderError, SubtitleStyle, render_preview, render_video
 from video_dubber.report import render_html_report
 from video_dubber.split import SplitConfig, SplitError, split_transcript
