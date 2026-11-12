@@ -4,7 +4,14 @@ import pytest
 
 from video_dubber.audio import concat, make_silence, make_sine
 from video_dubber.transcript import Segment, Transcript, Word
-from video_dubber.verify import VerifyConfig, VerifyError, verify_dub
+from video_dubber.verify import (
+    SegmentVoiceCheck,
+    VerifyConfig,
+    VerifyError,
+    VerifyReport,
+    build_verify_report,
+    verify_dub,
+)
 from video_dubber.voice import VoiceLibrary, clone_from_references
 
 
@@ -136,6 +143,95 @@ class TestSkippedSegments:
             config=VerifyConfig(min_segment_s=0.1),
         )
         assert checks[0].verdict == "match"
+
+
+class TestVerifyReport:
+    def _mixed_checks(self):
+        audio = concat(
+            make_sine(220.0, 1.0),
+            make_sine(330.0, 1.0),
+            make_sine(440.0, 1.0),
+            make_silence(1.0),
+        )
+        transcript = Transcript(
+            segments=[
+                Segment(
+                    words=[Word("hello", 0.0, 0.5), Word("mars", 0.5, 1.0)],
+                    speaker="Asha",
+                ),
+                Segment(
+                    words=[Word("good", 1.0, 1.5), Word("morning", 1.5, 2.0)],
+                    speaker="Asha",
+                ),
+                Segment(
+                    words=[Word("and", 2.0, 2.5), Word("you", 2.5, 3.0)],
+                    speaker="Asha",
+                ),
+                Segment(
+                    words=[Word("bye", 3.0, 3.5), Word("now", 3.5, 4.0)],
+                    speaker="Ravi",
+                ),
+            ],
+            language="en",
+        )
+        return verify_dub(audio, transcript, _library())
+
+    def test_mixed_report_counts_and_verdict(self):
+        report = build_verify_report(self._mixed_checks())
+        assert report.segments_checked == 3
+        assert report.segments_skipped == 1
+        assert report.matches == 1
+        assert report.uncertain == 1
+        assert report.mismatches == 1
+        assert report.verdict == "review"
+        assert report.worst_index == 3
+        assert report.worst_similarity == pytest.approx(0.77, abs=0.02)
+        assert report.mean_similarity == pytest.approx(0.88, abs=0.03)
+
+    def test_per_speaker_breakdown(self):
+        report = build_verify_report(self._mixed_checks())
+        asha = report.per_speaker["Asha"]
+        assert asha["checked"] == 3
+        assert asha["matches"] == 1
+        assert asha["uncertain"] == 1
+        assert asha["mismatches"] == 1
+        assert asha["worst_similarity"] == pytest.approx(0.77, abs=0.02)
+        # Ravi's only segment is silent, so he has no scored entry.
+        assert "Ravi" not in report.per_speaker
+
+    def test_clean_report_passes(self):
+        audio = concat(make_sine(220.0, 1.0), make_sine(110.0, 1.0))
+        report = build_verify_report(verify_dub(audio, _transcript(["Asha", "Ravi"]), _library()))
+        assert report.verdict == "pass"
+        assert report.matches == 2
+        assert report.mismatches == 0
+        assert report.uncertain == 0
+
+    def test_report_json_round_trip(self):
+        report = build_verify_report(self._mixed_checks())
+        restored = VerifyReport.from_json(report.to_json())
+        assert restored.verdict == report.verdict
+        assert restored.matches == report.matches
+        assert restored.worst_index == report.worst_index
+        assert restored.per_speaker == report.per_speaker
+        assert len(restored.checks) == len(report.checks)
+        assert restored.checks[2].verdict == "mismatch"
+        assert restored.checks[2].best_match == "Ravi"
+
+    def test_report_markdown(self):
+        report = build_verify_report(self._mixed_checks())
+        text = report.to_markdown()
+        assert "Verdict: **review**" in text
+        assert "Matches: 1, uncertain: 1, mismatches: 1" in text
+        assert "## Per speaker" in text
+        assert "Asha: 3 checked" in text
+        assert "Segment 3" in text and "[mismatch]" in text
+        assert "sounds like Ravi" in text
+
+    def test_check_dict_round_trip(self):
+        check = self._mixed_checks()[0]
+        restored = SegmentVoiceCheck.from_dict(check.to_dict())
+        assert restored == check
 
 
 class TestValidation:
