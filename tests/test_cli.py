@@ -2875,6 +2875,20 @@ def test_cli_verify_json_and_report_out(tmp_path, capsys):
     assert report["matches"] == 2
 
 
+def test_cli_verify_library_from_config(tmp_path, capsys):
+    audio, transcript_path, library_path = _make_verify_fixtures(tmp_path)
+    config_path = tmp_path / "dubber.toml"
+    config_path.write_text(f'[dubber]\nvoice_library = "{library_path}"\n', encoding="utf-8")
+    assert main(["--config", str(config_path), "verify", str(audio), str(transcript_path)]) == 0
+    assert "Verdict: **pass**" in capsys.readouterr().out
+
+
+def test_cli_verify_no_library_anywhere_errors(tmp_path, capsys):
+    audio, transcript_path, _library_path = _make_verify_fixtures(tmp_path)
+    assert main(["verify", str(audio), str(transcript_path)]) == 2
+    assert "needs a library path" in capsys.readouterr().err
+
+
 def test_cli_verify_unknown_speaker_errors(tmp_path, capsys):
     from video_dubber.transcript import Segment, Word
 
