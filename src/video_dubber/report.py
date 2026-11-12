@@ -118,6 +118,8 @@ def render_html_report(report: DubReport, title: str = "Dub quality report") -> 
         metrics.append(("Speakers dubbed", str(report.speakers_dubbed)))
     if report.bed_level is not None:
         metrics.append(("Background bed level", f"{report.bed_level:.2f}"))
+    if report.style is not None:
+        metrics.append(("Delivery style", report.style))
     if report.enhancement is not None:
         enh = report.enhancement
         metrics.append(

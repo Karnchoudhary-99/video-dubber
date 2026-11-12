@@ -37,6 +37,7 @@ from video_dubber.enhance import EnhancementReport
 from video_dubber.extract import ExtractionError, _run
 from video_dubber.quality import mos_proxy as _mos_proxy
 from video_dubber.quality import wer_from_transcripts
+from video_dubber.style import DubStyle, apply_style, get_style
 from video_dubber.transcript import Transcript
 from video_dubber.voice import SpeakerProfile, VoiceCloner, time_stretch
 
@@ -144,6 +145,7 @@ def dub_transcript(
     original: AudioData | None = None,
     profiles: dict[str, SpeakerProfile] | None = None,
     bed_level: float | None = None,
+    style: DubStyle | str | None = None,
 ) -> tuple[AudioData, list[float], list[tuple[float, float]]]:
     """Render a full dubbed track for a translated transcript.
 
@@ -167,12 +169,20 @@ def dub_transcript(
     under the dub at ``bed_level`` gain. Needs ``original`` — without
     it there is no bed to extract, so :class:`AssemblyError` is raised.
     An out-of-range level raises :class:`~video_dubber.bed.BedError`.
+
+    With ``style`` (a :class:`~video_dubber.style.DubStyle` or its
+    name), every segment is read in that delivery style — rate scaled,
+    pitch shifted — applied on top of each segment's speaker voice, so
+    multi-speaker dubs keep their voices and gain the style. An
+    unknown style name raises :class:`~video_dubber.style.StyleError`
+    before any synthesis runs.
     """
     if not transcript.segments:
         raise AssemblyError("cannot dub an empty transcript")
     total = transcript.segments[-1].end
     if total <= 0:
         raise AssemblyError("transcript has no timed segments to dub")
+    resolved_style = get_style(style) if isinstance(style, str) else style
     placed: list[tuple[float, AudioData]] = []
     fit_factors: list[float] = []
     for segment in transcript.segments:
@@ -181,6 +191,8 @@ def dub_transcript(
         voice = profile
         if profiles is not None and segment.speaker is not None:
             voice = profiles.get(segment.speaker, profile)
+        if resolved_style is not None:
+            voice = apply_style(voice, resolved_style)
         spoken = cloner.synthesize(segment.text, voice)
         fitted, factor = fit_to_window(spoken, segment.duration)
         fit_factors.append(factor)
@@ -308,6 +320,7 @@ class DubReport:
     word_error_rate: float | None = None  # vs a same-language reference, None if not given
     speakers_dubbed: int = 0  # distinct speaker labels in the dubbed segments
     bed_level: float | None = None  # music-bed mix level, None when no bed was kept
+    style: str | None = None  # delivery style name, None when the default voice was used
     enhancement: EnhancementReport | None = (
         None  # audio-enhancement numbers, None when not enhanced
     )
@@ -335,6 +348,7 @@ class DubReport:
                 ),
                 "speakers_dubbed": self.speakers_dubbed,
                 "bed_level": self.bed_level,
+                "style": self.style,
                 "enhancement": (None if self.enhancement is None else self.enhancement.to_dict()),
                 "mos_proxy": self.mos_proxy,
                 "verdict": self.verdict,
@@ -365,6 +379,8 @@ class DubReport:
             lines.append(f"- Speakers dubbed: {self.speakers_dubbed}")
         if self.bed_level is not None:
             lines.append(f"- Background bed level: {self.bed_level:.2f}")
+        if self.style is not None:
+            lines.append(f"- Delivery style: {self.style}")
         if self.enhancement is not None:
             lines.append(
                 f"- Enhancement: RMS {self.enhancement.before.rms_dbfs:.1f} -> "
@@ -403,6 +419,7 @@ class DubReport:
                 word_error_rate=data.get("word_error_rate"),
                 speakers_dubbed=int(data.get("speakers_dubbed", 0)),
                 bed_level=data.get("bed_level"),
+                style=data.get("style"),
                 enhancement=enhancement,
                 mos_proxy=float(data.get("mos_proxy", 5.0)),
                 verdict=str(data.get("verdict", "good")),
@@ -434,6 +451,7 @@ def build_report(
     reference_transcript: Transcript | None = None,
     bed_level: float | None = None,
     enhancement: EnhancementReport | None = None,
+    style: DubStyle | str | None = None,
 ) -> DubReport:
     """Score a dub from the placed clips and the fit factors.
 
@@ -505,6 +523,11 @@ def build_report(
         word_error_rate=wer,
         speakers_dubbed=len({s.speaker for s in timed if s.speaker is not None}),
         bed_level=bed_level,
+        style=(
+            style.name
+            if isinstance(style, DubStyle)
+            else (style if isinstance(style, str) else None)
+        ),
         enhancement=enhancement,
         mos_proxy=_mos_proxy(
             mean_drift,

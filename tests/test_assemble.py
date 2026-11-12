@@ -16,6 +16,7 @@ from video_dubber.assemble import (
 )
 from video_dubber.audio import AudioData, make_silence, make_sine
 from video_dubber.bed import BedError
+from video_dubber.style import StyleError
 from video_dubber.transcript import Segment, Transcript, Word
 from video_dubber.voice import EMBEDDING_DIM, ScriptedVoiceCloner, SpeakerProfile
 
@@ -151,6 +152,68 @@ class TestDubTranscript:
         assert len(placed) == 1
 
 
+class TestDubStyle:
+    def _transcript(self) -> Transcript:
+        return Transcript(
+            segments=[
+                Segment(words=_words(["hello", "world"], 0.0)),
+                Segment(words=_words(["good", "morning"], 2.0)),
+            ],
+            language="hi",
+        )
+
+    def test_energetic_style_fits_faster_than_plain(self):
+        # A faster style synthesises shorter speech, so the stretch
+        # needed to fill the same window is larger (closer to 1.0 from
+        # below) than the unstyled dub's.
+        plain = dub_transcript(self._transcript(), ScriptedVoiceCloner(), _profile())[1]
+        styled = dub_transcript(
+            self._transcript(), ScriptedVoiceCloner(), _profile(), style="energetic"
+        )[1]
+        assert all(s > p for s, p in zip(styled, plain))
+
+    def test_style_object_and_name_agree(self):
+        from video_dubber.style import get_style
+
+        by_name = dub_transcript(
+            self._transcript(), ScriptedVoiceCloner(), _profile(), style="narration"
+        )[1]
+        by_object = dub_transcript(
+            self._transcript(), ScriptedVoiceCloner(), _profile(), style=get_style("narration")
+        )[1]
+        assert by_name == by_object
+
+    def test_unknown_style_fails_before_synthesis(self):
+        with pytest.raises(StyleError, match="unknown dub style"):
+            dub_transcript(self._transcript(), ScriptedVoiceCloner(), _profile(), style="shouty")
+
+    def test_style_applies_on_top_of_speaker_voices(self):
+        # Multi-speaker: the style scales each speaker's own rate, it
+        # does not collapse them onto the default voice.
+        ravi = SpeakerProfile(
+            name="Ravi",
+            embedding=[0.1] * EMBEDDING_DIM,
+            base_pitch_hz=120.0,
+            speaking_rate_wpm=120.0,
+        )
+        transcript = Transcript(
+            segments=[
+                Segment(words=_words(["hello", "world"], 0.0), speaker="Ravi"),
+                Segment(words=_words(["good", "morning"], 2.0), speaker="Asha"),
+            ],
+            language="hi",
+        )
+        dub, factors, placed = dub_transcript(
+            transcript,
+            ScriptedVoiceCloner(),
+            _profile(),
+            profiles={"Ravi": ravi},
+            style="energetic",
+        )
+        assert len(factors) == 2
+        assert dub.duration == pytest.approx(3.0)
+
+
 class TestDubBed:
     def _two_segment_transcript(self) -> Transcript:
         return Transcript(
@@ -270,6 +333,28 @@ class TestBuildReport:
         loaded = DubReport.from_json(json.dumps(data))
         assert loaded.segments == []
         assert loaded.verdict == "good"
+
+    def test_report_records_style_and_round_trips(self):
+        transcript = Transcript(segments=[Segment(words=_words(["hello"], 0.0))], language="hi")
+        dub, factors, placed = dub_transcript(transcript, ScriptedVoiceCloner(), _profile())
+        report = build_report(transcript, placed, factors, dub, style="energetic")
+        assert report.style == "energetic"
+        assert "energetic" in report.to_markdown()
+        assert json.loads(report.to_json())["style"] == "energetic"
+        loaded = DubReport.from_json(report.to_json())
+        assert loaded.style == "energetic"
+        assert loaded.to_json() == report.to_json()
+
+    def test_report_without_style_loads_with_none(self):
+        # Reports written before styles existed have no style key.
+        transcript = Transcript(segments=[Segment(words=_words(["hello"], 0.0))], language="hi")
+        dub, factors, placed = dub_transcript(transcript, ScriptedVoiceCloner(), _profile())
+        report = build_report(transcript, placed, factors, dub)
+        data = json.loads(report.to_json())
+        del data["style"]
+        loaded = DubReport.from_json(json.dumps(data))
+        assert loaded.style is None
+        assert "Delivery style" not in loaded.to_markdown()
 
     def test_report_from_json_rejects_bad_payload(self):
         for bad in ("not json", "[]", "{}", '{"segments_dubbed": 1}'):
