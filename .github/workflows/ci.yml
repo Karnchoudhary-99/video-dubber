@@ -60,3 +60,5 @@ jobs:
       - run: python examples/demo_align.py
       - run: python examples/demo_qa.py
       - run: python examples/demo_verify.py
+      - run: python examples/demo_init.py
+      - run: python examples/demo_status.py

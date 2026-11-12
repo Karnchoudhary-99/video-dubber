@@ -39,6 +39,8 @@ keeping the speaker's voice.
 - [x] Subtitle alignment (shift cues to the speech in the rendered dub, `dubber align`, `--max-shift` clamp)
 - [x] Subtitle QA (readability checks: reading speed, line width, cue length, overlaps, gaps, `dubber qa`)
 - [x] Voice-consistency verification (per-segment embedding similarity vs the claimed speaker, match/uncertain/mismatch, `dubber verify`, `dub --verify`)
+- [x] Project scaffolding (valid-on-the-spot `dubber.toml` + manifest + voice library, runnable offline example job, `dubber init`)
+- [x] Project status (`dubber status`: not started / partial / done / stale per job, report verdict + MOS, `--json`)
 
 ## Quick start
 
@@ -46,6 +48,52 @@ keeping the speaker's voice.
 pip install -e .[dev]
 video-dubber --help
 ```
+
+## Project scaffolding (`dubber init`)
+
+Starting a dub by hand means writing four files that have to agree —
+a `dubber.toml`, a batch `manifest.json`, a voice library, and the
+speaker profile the jobs point at — and a typo only fails when the
+batch runs. `dubber init` writes all of them at once, and every file
+it writes is valid on the spot:
+
+```bash
+video-dubber init my-first-dub --target es
+cd my-first-dub && video-dubber batch manifest.json
+# ok example (verdict review, MOS proxy 3.25, 0.7s)
+# batch done: 1 ok, 0 failed, 0 skipped out of 1
+```
+
+- The scaffold ships a runnable example job: a short synthetic tone in
+  `source/example.wav` dubbed with the scripted (offline) transcriber,
+  so the batch works immediately with no model and no network. The
+  narrator profile (`voices/narrator.json`, also in `voices.json`) is
+  built from that same tone.
+- `dubber init my-dub --source clip.mp4` seeds a second job for a real
+  video (Whisper backend — install Whisper before running it). A
+  source inside the project gets a relative path in the manifest.
+- `init` refuses a non-empty directory; `--force` scaffolds into one
+  anyway but only overwrites the files it owns, never anything else.
+  Bad languages, backends and styles fail up front instead of writing
+  a broken project.
+- Demo: `python examples/demo_init.py` — scaffolds a project, runs its
+  example batch job, then shows the refusal and the `--force` override.
+
+`dubber status` grades the project without running anything: it loads
+the config and the manifest (a broken file is reported, not fatal),
+then grades every job from `out/<job>/` — **not started**, **partial**
+(output dir but no dub), **done** (with the report verdict and MOS
+proxy), or **stale** (the source changed since the dub was made).
+`--json` prints the same status for scripting:
+
+```bash
+video-dubber status
+# - 1/1 jobs done (1 done)
+#   - example (hi): done, verdict review, MOS proxy 3.25
+```
+
+- Demo: `python examples/demo_status.py` — status before, after, and
+  after touching the source (not started → done → stale).
 
 ## Audio extraction + transcription
 

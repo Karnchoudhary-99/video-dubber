@@ -98,6 +98,7 @@ from video_dubber.export import (
 )
 from video_dubber.extract import ExtractionError, extract_audio
 from video_dubber.fidelity import FidelityError, check_fidelity
+from video_dubber.init import InitError, scaffold_project
 from video_dubber.lexicon import (
     LexiconError,
     PronunciationLexicon,
@@ -112,6 +113,7 @@ from video_dubber.qa import QaConfig, QaError, qa_transcript
 from video_dubber.render import RenderError, SubtitleStyle, render_preview, render_video
 from video_dubber.report import render_html_report
 from video_dubber.split import SplitConfig, SplitError, split_transcript
+from video_dubber.status import StatusError, project_status
 from video_dubber.style import StyleError, get_style, list_styles
 from video_dubber.subtitles import retime_transcript, to_ass
 from video_dubber.transcribe import (
@@ -1071,6 +1073,41 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output format (default json).",
     )
 
+    p_init = sub.add_parser("init", help="Scaffold a new dubbing project directory.")
+    p_init.add_argument(
+        "path",
+        nargs="?",
+        default=".",
+        help="Project directory to create (default: current directory).",
+    )
+    p_init.add_argument("--source", help="Seed a batch job for an existing video file.")
+    p_init.add_argument(
+        "--source-language", default="en", help="Source language code (default en)."
+    )
+    p_init.add_argument("--target", default="hi", help="Target language code (default hi).")
+    p_init.add_argument(
+        "--backend",
+        choices=["dictionary", "argos"],
+        default="dictionary",
+        help="Translation backend (default dictionary).",
+    )
+    p_init.add_argument("--style", help="Default delivery style for the project.")
+    p_init.add_argument(
+        "--force",
+        action="store_true",
+        help="Scaffold into a non-empty directory (only scaffold-owned files are overwritten).",
+    )
+
+    p_status = sub.add_parser("status", help="Show what is done, stale or broken in a project.")
+    p_status.add_argument(
+        "path",
+        nargs="?",
+        default=".",
+        help="Project directory to grade (default: current directory).",
+    )
+    p_status.add_argument("--json", action="store_true", help="Print the status as JSON.")
+    p_status.add_argument("--out-dir", default="out", help="Batch output directory (default out).")
+
     p_watch = sub.add_parser(
         "watch", help="Dub every new video that lands in a folder, as it appears."
     )
@@ -1208,6 +1245,35 @@ def _cmd_lexicon(args: argparse.Namespace) -> int:
         if applied.replacements:
             for matched, spoken in applied.replacements:
                 print(f"  {matched} -> {spoken}")
+    return 0
+
+
+def _cmd_status(args: argparse.Namespace) -> int:
+    import json
+
+    status = project_status(args.path, out_dir=args.out_dir)
+    if args.json:
+        print(json.dumps(status.to_dict(), indent=2))
+    else:
+        print(status.to_markdown(), end="")
+    return 0
+
+
+def _cmd_init(args: argparse.Namespace) -> int:
+    root = Path(args.path)
+    written = scaffold_project(
+        root,
+        source_language=args.source_language,
+        target_language=args.target,
+        backend=args.backend,
+        style=args.style,
+        source=args.source,
+        force=args.force,
+    )
+    print(f"created project in {root}")
+    for path in written:
+        print(f"  {path.relative_to(root)}")
+    print("next: cd into it and run `dubber batch manifest.json`")
     return 0
 
 
@@ -2569,6 +2635,10 @@ def main(argv=None) -> int:
             return _cmd_watch(args)
         if args.command == "config":
             return _cmd_config(args)
+        if args.command == "init":
+            return _cmd_init(args)
+        if args.command == "status":
+            return _cmd_status(args)
     except (
         AlignError,
         AssemblyError,
@@ -2579,6 +2649,7 @@ def main(argv=None) -> int:
         EstimateError,
         ExportError,
         ExtractionError,
+        InitError,
         level.LevelError,
         MergeError,
         MultiTargetError,
@@ -2586,6 +2657,7 @@ def main(argv=None) -> int:
         QaError,
         RenderError,
         SplitError,
+        StatusError,
         TranscriptionError,
         TranslationError,
         VerifyError,

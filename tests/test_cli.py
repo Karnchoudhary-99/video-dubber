@@ -3014,3 +3014,77 @@ def test_cli_verify_unknown_speaker_errors(tmp_path, capsys):
     transcript_path.write_text(bad.to_json(), encoding="utf-8")
     assert main(["verify", str(audio), str(transcript_path), str(library_path)]) == 1
     assert "no such profile" in capsys.readouterr().err
+
+
+def test_cli_init_creates_project(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    assert main(["init", "my-dub", "--target", "es"]) == 0
+    out = capsys.readouterr().out
+    assert "created project in my-dub" in out
+    assert "dubber batch manifest.json" in out
+    assert (tmp_path / "my-dub" / "dubber.toml").is_file()
+    assert (tmp_path / "my-dub" / "manifest.json").is_file()
+    assert (tmp_path / "my-dub" / "voices.json").is_file()
+    # The scaffolded config is picked up by the next command.
+    monkeypatch.chdir(tmp_path / "my-dub")
+    assert main(["config", "--format", "json"]) == 0
+    config = json.loads(capsys.readouterr().out.split("\n(loaded from")[0])
+    assert config["target_language"] == "es"
+
+
+def test_cli_init_refuses_nonempty_without_force(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    assert main(["init", "my-dub"]) == 0
+    capsys.readouterr()
+    assert main(["init", "my-dub"]) == 1
+    assert "not empty" in capsys.readouterr().err
+    assert main(["init", "my-dub", "--force"]) == 0
+
+
+def test_cli_init_bad_style_errors(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    assert main(["init", "my-dub", "--style", "operatic"]) == 1
+    assert "unknown dub style" in capsys.readouterr().err
+    assert not (tmp_path / "my-dub").exists()
+
+
+def test_cli_init_with_source_seeds_job(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"fake video")
+    assert main(["init", "my-dub", "--source", str(video)]) == 0
+    manifest = json.loads((tmp_path / "my-dub" / "manifest.json").read_text())
+    assert [job["name"] for job in manifest["jobs"]] == ["example", "clip"]
+    assert manifest["jobs"][1]["backend"] == "whisper"
+
+
+def test_cli_status_fresh_project(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    assert main(["init", "my-dub"]) == 0
+    capsys.readouterr()
+    monkeypatch.chdir(tmp_path / "my-dub")
+    assert main(["status"]) == 0
+    out = capsys.readouterr().out
+    assert "0/1 jobs done (1 not started)" in out
+    assert "example (hi): not started" in out
+    assert main(["status", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["jobs"][0]["state"] == "not started"
+
+
+def test_cli_status_after_batch(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    assert main(["init", "my-dub"]) == 0
+    capsys.readouterr()
+    monkeypatch.chdir(tmp_path / "my-dub")
+    assert main(["batch", "manifest.json", "--out-dir", "out"]) == 0
+    capsys.readouterr()
+    assert main(["status"]) == 0
+    out = capsys.readouterr().out
+    assert "1/1 jobs done (1 done)" in out
+    assert "verdict review" in out
+
+
+def test_cli_status_missing_directory(tmp_path, capsys):
+    assert main(["status", str(tmp_path / "nope")]) == 1
+    assert "not a directory" in capsys.readouterr().err
