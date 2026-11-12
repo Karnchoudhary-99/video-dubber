@@ -34,6 +34,7 @@ keeping the speaker's voice.
 - [x] Segment merging (join over-split fragments across short same-speaker gaps)
 - [x] Environment diagnostics (`dubber doctor`: tools, versions, disk space)
 - [x] Per-segment loudness levelling (`level.py`: even out line volumes, `dubber level`, `dub --level`)
+- [x] Dubbing style presets (documentary/conversational/energetic/narration/dramatic, `dub --style`, `dubber styles`)
 
 ## Quick start
 
@@ -144,6 +145,7 @@ defaults; `--config path` overrides the search):
 target_language = "hi"
 voice_library = "voices.json"
 bed_level = 0.3
+style = "documentary"
 
 [dubber.enhance]
 target = -16.0
@@ -375,6 +377,48 @@ video-dubber level dub.wav transcript.json --out level.wav --report-out level.md
   loud (-9 dBFS) line levelled to -16 dBFS, then the same track with
   the default 12 dB cap, where the quiet line honestly lands at
   -17 dBFS and is flagged at cap.
+
+## Dubbing style presets
+
+The same cloned voice can read a documentary slowly and a trailer
+fast without re-cloning — a style is performance, not identity. It
+scales the speaking rate and shifts the pitch (`adjust_prosody`
+under the hood) and leaves the embedding untouched, so a styled
+profile still matches its speaker:
+
+```bash
+# List the five presets and their numbers
+video-dubber styles
+#   documentary: 0.95x rate, +0 semitones — Measured, steady delivery ...
+#   conversational: 1.00x rate, +0 semitones — Natural everyday speech ...
+#   energetic: 1.15x rate, +2 semitones — Fast, bright delivery ...
+#   narration: 0.90x rate, -1 semitones — Slow, low audiobook-style narration.
+#   dramatic: 0.85x rate, -2 semitones — Deliberate, low delivery ...
+
+# Dub in a style (also: dub-multi, patch, estimate, batch manifests,
+# and a [dubber] style = "..." default in dubber.toml)
+video-dubber dub translated.json --profile asha.json --style energetic \
+  --out dubbed.wav --report-out report.json
+# delivery style: energetic
+```
+
+- Styles matter because fit is the dub's hard constraint: a fast
+  style fits long translations into short windows with less
+  time-stretching, while a slow style needs wider windows — pick the
+  style before estimating, and `estimate --style` predicts at the
+  styled rate (its cache probe uses the styled profile, so a segment
+  cached in one style is not counted as a hit for another).
+- The style is recorded in the quality report (JSON, Markdown and
+  HTML) and in every per-target report from `dub-multi`; `patch`
+  re-reads the replacement line in the dub's style so the patched
+  line does not sound like a different take. An unknown style name
+  fails loudly (exit 2 on the CLI, a `StyleError` in the library)
+  instead of silently dubbing in the default.
+- Demo: `python examples/demo_style.py` — the same two lines dubbed
+  plain (mean fit 1.06), energetic (1.19) and dramatic (0.91). The
+  energetic dub's max fit is 1.27, outside the 0.8–1.25 band, so its
+  verdict honestly flips to `review`: the style needs wider windows
+  for these lines, and the report says so.
 
 ## Speaker diarization
 
@@ -976,6 +1020,20 @@ segments are reported, not gained, and timing never moves.
 the report now measures the levelled track; the demo's quiet line
 needs +13 dB, past the default 12 dB cap, so it honestly lands at
 -17 dBFS and is flagged at cap).
+Dubbing style presets are done (669 tests): `style.py` defines five
+named delivery styles — documentary (0.95x, +0 semitones),
+conversational (1.00x, +0), energetic (1.15x, +2), narration (0.90x,
+-1) and dramatic (0.85x, -2) — applied via `adjust_prosody`, so the
+voice's embedding is untouched and the styled profile still matches
+its speaker; `dub`/`dub-multi`/`patch`/`estimate` take `--style`,
+batch manifests take a `style` key (or a `defaults` one),
+`dubber.toml` pins a default, and `dubber styles` lists the presets.
+The style is recorded in the quality report and in every
+per-target `dub-multi` report, `estimate --style` predicts at the
+styled rate with style-aware cache probes, and unknown style names
+fail loudly instead of silently dubbing in the default (the demo's
+energetic dub needs a 1.27x max fit, so its verdict honestly flips
+to `review`).
 Remaining: the self-review
 checklist and public flip — the
 project stays private per the 5–7 day pace rule (started 2026-11-08,
