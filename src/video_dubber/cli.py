@@ -36,6 +36,8 @@ Subcommands (see ``video-dubber <cmd> --help`` for details):
   after the voice stops.
 * ``qa`` — check a transcript's subtitles for readability (reading
   speed, line width, cue length, overlaps, gaps) before muxing.
+* ``verify`` — check the dubbed audio sounds like the speaker each
+  segment claims (voice-consistency verification) before muxing.
 * ``estimate`` — predict a dub before running it: speech durations, fit
   factors, wall time, cache savings and cost, from a translated transcript.
 * ``batch`` — dub many videos/transcripts from one manifest JSON file.
@@ -128,6 +130,12 @@ from video_dubber.translate import (
     translate_transcript,
 )
 from video_dubber.vad import VadConfig, detect_speech, speech_ratio
+from video_dubber.verify import (
+    VerifyConfig,
+    VerifyError,
+    build_verify_report,
+    verify_dub,
+)
 from video_dubber.voice import (
     ScriptedVoiceCloner,
     SpeakerProfile,
@@ -732,6 +740,41 @@ def build_parser() -> argparse.ArgumentParser:
         "--fail-on-warn",
         action="store_true",
         help="Exit 1 on warnings too, not just errors.",
+    )
+
+    p_verify = sub.add_parser(
+        "verify", help="Check a dubbed WAV sounds like the speaker each segment claims."
+    )
+    p_verify.add_argument("audio", help="Dubbed WAV file to check.")
+    p_verify.add_argument("transcript", help="Transcript JSON file with speaker labels.")
+    p_verify.add_argument("library", help="Voice library JSON file with the speaker profiles.")
+    p_verify.add_argument(
+        "--match",
+        type=float,
+        default=None,
+        help=f"Similarity bar for a match (default {VerifyConfig().match_threshold}).",
+    )
+    p_verify.add_argument(
+        "--uncertain",
+        type=float,
+        default=None,
+        help=f"Similarity bar below which a segment is a mismatch (default {VerifyConfig().uncertain_threshold}).",
+    )
+    p_verify.add_argument(
+        "--min-segment",
+        type=float,
+        default=None,
+        help=f"Shortest segment worth checking, in seconds (default {VerifyConfig().min_segment_s}).",
+    )
+    p_verify.add_argument("--json", action="store_true", help="Print the report as JSON.")
+    p_verify.add_argument(
+        "--report-out",
+        help="Write the verification report (Markdown, or JSON with --json) here.",
+    )
+    p_verify.add_argument(
+        "--fail-on-uncertain",
+        action="store_true",
+        help="Exit 1 on uncertain checks too, not just mismatches.",
     )
 
     p_preflight = sub.add_parser(
@@ -2051,6 +2094,33 @@ def _cmd_qa(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_verify(args: argparse.Namespace) -> int:
+    audio = load_wav(args.audio)
+    with open(args.transcript, encoding="utf-8") as fh:
+        transcript = Transcript.from_json(fh.read())
+    library = VoiceLibrary.from_json_file(args.library)
+    defaults = VerifyConfig()
+    config = VerifyConfig(
+        match_threshold=args.match if args.match is not None else defaults.match_threshold,
+        uncertain_threshold=(
+            args.uncertain if args.uncertain is not None else defaults.uncertain_threshold
+        ),
+        min_segment_s=(
+            args.min_segment if args.min_segment is not None else defaults.min_segment_s
+        ),
+    )
+    report = build_verify_report(verify_dub(audio, transcript, library, config), config)
+    text = report.to_json() if args.json else report.to_markdown()
+    print(text, end="" if text.endswith("\n") else "\n")
+    if args.report_out:
+        with open(args.report_out, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        print(f"wrote {args.report_out}")
+    if report.mismatches > 0 or (args.fail_on_uncertain and report.uncertain > 0):
+        return 1
+    return 0
+
+
 def _cmd_split(args: argparse.Namespace) -> int:
     with open(args.transcript, encoding="utf-8") as fh:
         transcript = Transcript.from_json(fh.read())
@@ -2429,6 +2499,8 @@ def main(argv=None) -> int:
             return _cmd_align(args)
         if args.command == "qa":
             return _cmd_qa(args)
+        if args.command == "verify":
+            return _cmd_verify(args)
         if args.command == "preflight":
             return _cmd_preflight(args)
         if args.command == "doctor":
@@ -2470,6 +2542,7 @@ def main(argv=None) -> int:
         SplitError,
         TranscriptionError,
         TranslationError,
+        VerifyError,
         VoiceCloneError,
         WatchError,
         ValueError,
