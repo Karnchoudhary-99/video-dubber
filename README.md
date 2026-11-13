@@ -25,7 +25,7 @@ keeping the speaker's voice.
 - [x] Multi-target dubbing (one source → several languages, per-language bundles + summary)
 - [x] Pre-flight audio checks (clipping, DC offset, silence, SNR — abort a bad source before dubbing)
 - [x] Dub comparison (A/B two quality reports metric by metric, verdict + table)
-- [ ] Self-review checklist, then public
+- [x] Self-review checklist, then public
 - [x] Synthesis cache (skip re-synthesising unchanged segments, LRU eviction, `cache` CLI)
 - [x] Dub cost/time estimator (predicted durations, fit factors, wall time, cache savings, cost)
 - [x] Segment splitting (cut long lines at silence gaps so each piece fits its window)
